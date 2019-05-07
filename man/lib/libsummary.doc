@@ -4,6 +4,9 @@
 \libsummary{aggregate}
 \input{summaries.d/aggregate.tex}
 
+\libsummary{ansi_term}
+\input{summaries.d/ansiterm.tex}
+
 \libsummary{apply}
 \input{summaries.d/apply.tex}
 
@@ -69,6 +72,12 @@
 \libsummary{csv}
 \input{summaries.d/csv.tex}
 
+\libsummary{dcgbasics}
+\input{summaries.d/dcgbasics.tex}
+
+\libsummary{dcghighorder}
+\input{summaries.d/dcghighorder.tex}
+
 \libsummary{debug}
 \input{summaries.d/debug.tex}
 
@@ -92,6 +101,9 @@
 
 \libsummary{main}
 \input{summaries.d/main.tex}
+
+\libsummary{occurs}
+\input{summaries.d/occurs.tex}
 
 \libsummary{option}
 \input{summaries.d/option.tex}
@@ -137,15 +149,7 @@
 \input{summaries.d/random.tex}
 
 \libsummary{readutil}
-
-\begin{summarylist}{ll}
-\predicatesummary{read_line_to_codes}{2}{Read line from a stream}
-\predicatesummary{read_line_to_codes}{3}{Read line from a stream}
-\predicatesummary{read_stream_to_codes}{2}{Read contents of stream}
-\predicatesummary{read_stream_to_codes}{3}{Read contents of stream}
-\predicatesummary{read_file_to_codes}{3}{Read contents of file}
-\predicatesummary{read_file_to_terms}{3}{Read contents of file to Prolog terms}
-\end{summarylist}
+\input{summaries.d/readutil.tex}
 
 \libsummary{record}
 
@@ -167,6 +171,8 @@ This library is only available on Windows systems.
 \predicatesummary{shell_register_dde}{6}{Register DDE action}
 \predicatesummary{shell_register_prolog}{1}{Register Prolog}
 \end{summarylist}
+
+\libsummary{settings}
 
 \libsummary{simplex}
 

@@ -434,6 +434,7 @@ suggest predicates from a keyword.
 \predicatesummary{noguitracer}{0}{Disable the graphical debugger}
 \predicatesummary{nonground}{2}{Term is not ground due to witness}
 \predicatesummary{nonvar}{1}{Type check for bound term}
+\predicatesummary{nonterminal}{1}{Set predicate property}
 \predicatesummary{noprofile}{1}{Hide (meta-) predicate for the profiler}
 \predicatesummary{noprotocol}{0}{Disable logging of user interaction}
 \predicatesummary{normalize_space}{2}{Normalize white space}
@@ -691,6 +692,7 @@ suggest predicates from a keyword.
 \predicatesummary{tmp_file_stream}{3}{Create a temporary file and open it}
 \predicatesummary{tnodebug}{0}{Switch off debug mode in all threads}
 \predicatesummary{tnodebug}{1}{Switch off debug mode in a thread}
+\predicatesummary{tnot}{1}{Tabled negation}
 \predicatesummary{told}{0}{Close current output}
 \predicatesummary{tprofile}{1}{Profile a thread for some period}
 \predicatesummary{trace}{0}{Start the tracer}

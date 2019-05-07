@@ -3,8 +3,9 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1996-2017, University of Amsterdam
+    Copyright (c)  1996-2019, University of Amsterdam
                               VU University Amsterdam
+			      CWI, Amsterdam
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -40,6 +41,10 @@
 #include "os/pl-text.h"
 #include "pl-codelist.h"
 #include <errno.h>
+
+#ifdef __SANITIZE_ADDRESS__
+#include <sanitizer/lsan_interface.h>
+#endif
 
 #include <limits.h>
 #if !defined(LLONG_MAX)
@@ -1219,44 +1224,6 @@ PL_cons_list_v(term_t list, size_t count, term_t elems)
 
   return TRUE;
 }
-
-
-		 /*******************************
-		 *     POINTER <-> PROLOG INT	*
-		 *******************************/
-
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-Pointers are not a special type in Prolog. Instead, they are represented
-by an integer. The funtions below convert   integers  such that they can
-normally be expressed as a tagged  integer: the heap_base is subtracted,
-it is divided by 4 and the low 2   bits  are placed at the top (they are
-normally 0). longToPointer() does the inverse operation.
-- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-
-static inline uintptr_t
-pointerToInt(void *ptr)
-{ uintptr_t p   = (uintptr_t) ptr;
-  uintptr_t low = p & 0x3L;
-
-  p -= GD->heap_base;
-  p >>= 2;
-  p |= low<<(sizeof(uintptr_t)*8-2);
-
-  return p;
-}
-
-
-static inline void *
-intToPointer(uintptr_t p)
-{ uintptr_t low = p >> (sizeof(uintptr_t)*8-2);
-
-  p <<= 2;
-  p |= low;
-  p += GD->heap_base;
-
-  return (void *) p;
-}
-
 
 		 /*******************************
 		 *	      GET-*		*
@@ -3784,6 +3751,8 @@ _PL_unify_xpce_reference(term_t t, xpceref_t *ref)
 		 *       ATOMIC (INTERNAL)	*
 		 *******************************/
 
+#undef _PL_unify_atomic
+
 PL_atomic_t
 _PL_get_atomic(term_t t)
 { GET_LD
@@ -3803,6 +3772,8 @@ _PL_put_atomic(term_t t, PL_atomic_t a)
 { GET_LD
   setHandle(t, a);
 }
+
+#define _PL_unify_atomic(t, a)	PL_unify_atom__LD(t, a PASS_LD)
 
 
 		 /*******************************
@@ -4117,8 +4088,10 @@ PL_call_predicate(Module ctx, int flags, predicate_t pred, term_t h0)
   qid_t qid;
 
   if ( (qid = PL_open_query(ctx, flags, pred, h0)) )
-  { rval = PL_next_solution(qid);
-    PL_cut_query(qid);
+  { int r1 = PL_next_solution(qid);
+    int r2 = PL_cut_query(qid);
+
+    rval = (r1 && r2);	/* do not inline; we *must* execute PL_cut_query() */
   } else
     rval = FALSE;
 
@@ -4288,6 +4261,10 @@ PL_raise_exception(term_t exception)
   if ( PL_is_variable(exception) )	/* internal error */
     fatalError("Cannot throw variable exception");
 
+#if O_DEBUG
+  save_backtrace("exception");
+#endif
+
   LD->exception.processing = TRUE;
   if ( !PL_same_term(exception, exception_bin) ) /* re-throwing */
   { except_class co = classify_exception(exception_bin);
@@ -4356,13 +4333,15 @@ PL_clear_foreign_exception(LocalFrame fr)
 
   Sdprintf("Thread %d (%Ws): foreign predicate %s did not clear exception: \n\t",
 	   tid, name, predicateName(fr->predicate));
+#if O_DEBUG
+  print_backtrace_named("exception");
+#endif
 }
 #else
   Sdprintf("Foreign predicate %s did not clear exception: ",
 	   predicateName(fr->predicate));
 #endif
-  PL_write_term(Serror, ex, 1200, 0);
-  Sdprintf("\n");
+  PL_write_term(Serror, ex, 1200, PL_WRT_NEWLINE);
 
   PL_clear_exception();
 }
@@ -4556,22 +4535,47 @@ PL_toplevel(void)
 }
 
 
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+The    system    may     be      compiled     using     AddressSanitizer
+(https://github.com/google/sanitizers/wiki/AddressSanitizer)  which   is
+supported by GCC and Clang. Do do so, use
+
+    cmake -DCMAKE_BUILD_TYPE=Sanitize
+
+See cmake/BuildType.cmake for details.
+
+Currently SWI-Prolog does not reclaim all memory   on  edit, even not if
+cleanupProlog() is called with reclaim_memory set to TRUE. The docs says
+we can use __lsan_disable() just before exit   to  avoid the leak check,
+but this doesn't seem to work (Ubuntu 18.04). What does work is defining
+__asan_default_options(), providing an alternative   to  the environment
+variable LSAN_OPTIONS=.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
 int
 PL_halt(int status)
 { int reclaim_memory = FALSE;
 
-#if defined(GC_DEBUG) || defined(O_DEBUG)
+#if defined(GC_DEBUG) || defined(O_DEBUG) || defined(__SANITIZE_ADDRESS__)
   reclaim_memory = TRUE;
 #endif
 
   if ( cleanupProlog(status, reclaim_memory) )
   { run_on_halt(&GD->os.exit_hooks, status);
+
+#if 0 && defined(__SANITIZE_ADDRESS__)
+// Disabled as this doesn't work
+    Sdprintf("About to exit\n");
+    __lsan_do_leak_check();
+    Sdprintf("Done checking\n");
+    __lsan_disable();
+#endif
+
     exit(status);
   }
 
   return FALSE;
 }
-
 
 		 /*******************************
 		 *	    RESOURCES		*
@@ -5077,7 +5081,7 @@ PL_action(int action, ...)
       if ( gc_status.active )
       { Sfprintf(Serror,
 		 "\n[Cannot print stack while in %ld-th garbage collection]\n",
-		 gc_status.collections);
+		 LD->gc.stats.totals.collections);
 	rval = FALSE;
 	break;
       }

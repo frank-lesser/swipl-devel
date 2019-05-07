@@ -3,7 +3,8 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2016-2017, VU University Amsterdam
+    Copyright (c)  2016-2019, VU University Amsterdam
+			      CWI, Amsterdam
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -35,6 +36,7 @@
 #include "pl-incl.h"
 #include "pl-trie.h"
 #include "pl-indirect.h"
+#define AC_TERM_WALK_POP 1
 #include "pl-termwalk.c"
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -58,9 +60,32 @@ TODO
   - Make trie_gen/3 take the known prefix into account
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-#define TRIE_ERROR_VAL (((~(word)0)<<LMASK_BITS)|TAG_VAR)
+#define RESERVED_TRIE_VAL(n) (((word)(-(intptr_t)n)<<LMASK_BITS) | TAG_VAR)
+#define TRIE_ERROR_VAL       RESERVED_TRIE_VAL(1)
+#define TRIE_KEY_POP         RESERVED_TRIE_VAL(2)
+
+#define NVARS_FAST 100
+
+/* Will eventually be shared in pl-wam.c */
+typedef enum
+{ uread = 0,				/* Unification in read-mode */
+  uwrite				/* Unification in write mode */
+} unify_mode;
+
+typedef struct ukey_state
+{ trie	       *trie;			/* Trie for indirects */
+  Word		ptr;			/* current location */
+  unify_mode	umode;			/* unification mode */
+  size_t	max_var_seen;
+  size_t	vars_allocated;		/* # variables allocated */
+  Word*		vars;
+  Word		var_buf[NVARS_FAST];	/* quick var buffer */
+} ukey_state;
 
 static void	trie_destroy(trie *trie);
+static int	unify_key(ukey_state *state, word key ARG_LD);
+static void	init_ukey_state(ukey_state *state, trie *trie, Word p);
+static void	destroy_ukey_state(ukey_state *state);
 
 
 		 /*******************************
@@ -134,11 +159,7 @@ static PL_blob_t trie_blob =
 static trie_node       *new_trie_node(trie *trie, word key);
 static void		clear_vars(Word k, size_t var_number ARG_LD);
 static void		destroy_node(trie *trie, trie_node *n);
-static void		clear_node(trie *trie, trie_node *n);
-static unsigned int	key_nvar(word key);
-static void		max_nvar(unsigned int *nvars, word key);
-static size_t		key_gsize(trie *trie, word key);
-static void		max_gsize(size_t *gsize, trie *trie, word key);
+static void		clear_node(trie *trie, trie_node *n, int dealloc);
 static inline void	release_value(word value);
 
 
@@ -186,7 +207,7 @@ trie_empty(trie *trie)
   if ( !trie->references )
   { indirect_table *it = trie->indirects;
 
-    clear_node(trie, &trie->root);	/* TBD: verify not accessed */
+    clear_node(trie, &trie->root, FALSE);	/* TBD: verify not accessed */
     if ( it && COMPARE_AND_SWAP(&trie->indirects, it, NULL) )
       destroy_indirect_table(it);
   }
@@ -248,8 +269,11 @@ new_trie_node(trie *trie, word key)
 
 
 static void
-clear_node(trie *trie, trie_node *n)
-{ trie_children children = n->children;
+clear_node(trie *trie, trie_node *n, int dealloc)
+{ trie_children children;
+
+next:
+  children = n->children;
 
   if ( trie->release_node )
     (*trie->release_node)(trie, n);
@@ -260,20 +284,33 @@ clear_node(trie *trie, trie_node *n)
 
   if ( children.any &&
        COMPARE_AND_SWAP(&n->children.any, children.any, NULL) )
-  { switch( children.any->type )
+  { if ( dealloc )
+    { ATOMIC_DEC(&trie->node_count);
+      if ( trie->alloc_pool )
+	ATOMIC_SUB(&trie->alloc_pool->size, sizeof(trie_node));
+      PL_free(n);
+    }
+
+    switch( children.any->type )
     { case TN_KEY:
-	destroy_node(trie, children.key->child);
+      { n = children.key->child;
         PL_free(children.key);
-	break;
+	dealloc = TRUE;
+	goto next;
+      }
       case TN_HASHED:
-      { TableEnum e = newTableEnum(children.hash->table);
+      { Table table = children.hash->table;
+	TableEnum e = newTableEnum(table);
 	void *k, *v;
 
+	PL_free(children.hash);
+
 	while(advanceTableEnum(e, &k, &v))
-	  destroy_node(trie, v);
+	{ clear_node(trie, v, TRUE);
+	}
 
 	freeTableEnum(e);
-	destroyHTable(children.hash->table);
+	destroyHTable(table);
 	break;
       }
     }
@@ -282,13 +319,7 @@ clear_node(trie *trie, trie_node *n)
 
 static void
 destroy_node(trie *trie, trie_node *n)
-{ clear_node(trie, n);
-
-  ATOMIC_DEC(&trie->node_count);
-  if ( trie->alloc_pool )
-    ATOMIC_SUB(&trie->alloc_pool->size, sizeof(trie_node));
-
-  PL_free(n);
+{ clear_node(trie, n, TRUE);
 }
 
 
@@ -352,11 +383,6 @@ insert_child(trie *trie, trie_node *n, word key ARG_LD)
 				    children.key->child);
 	    addHTable(hnode->table, (void*)key, (void*)new);
 
-	    hnode->nvars = key_nvar(children.key->key);
-	    max_nvar(&hnode->nvars, key);
-	    hnode->gsize = key_gsize(trie, children.key->key);
-	    max_gsize(&hnode->gsize, trie, key);
-
 	    if ( COMPARE_AND_SWAP(&n->children.hash, children.hash, hnode) )
 	    { PL_free(children.any);		/* TBD: Safely free */
 	      new->parent = n;
@@ -374,8 +400,6 @@ insert_child(trie *trie, trie_node *n, word key ARG_LD)
 
 	  if ( new == old )
 	  { new->parent = n;
-	    max_nvar(&children.hash->nvars, key);
-	    max_gsize(&children.hash->gsize, trie, key);
 	  } else
 	  { destroy_node(trie, new);
 	  }
@@ -448,17 +472,26 @@ prune_error(trie *trie, trie_node *node ARG_LD)
 
 int
 trie_lookup(trie *trie, trie_node **nodep, Word k, int add ARG_LD)
-{ term_agenda agenda;
-  Word p;
+{ term_agenda_P agenda;
   trie_node *node = &trie->root;
   size_t var_number = 0;
   int rc = TRUE;
   int compounds = 0;
 
-  initTermAgenda(&agenda, 1, k);
-  while( node && (p=nextTermAgenda(&agenda)) )
-  { word w = *p;
+  initTermAgenda_P(&agenda, 1, k);
+  while( node )
+  { Word p;
+    word w;
 
+    if ( !(p=nextTermAgenda_P(&agenda)) )
+      break;
+    if ( p == AC_TERM_POP )
+    { if ( !(node = follow_node(trie, node, TRIE_KEY_POP, add PASS_LD)) )
+	break;
+      continue;
+    }
+
+    w = *p;
     switch( tag(w) )
     { case TAG_VAR:
 	if ( isVar(w) )
@@ -473,7 +506,7 @@ trie_lookup(trie *trie, trie_node **nodep, Word k, int add ARG_LD)
         break;
       case TAG_COMPOUND:
       { Functor f = valueTerm(w);
-        int arity = arityFunctor(f->definition);
+        size_t arity = arityFunctor(f->definition);
 
 	if ( add && ++compounds == 1000 && !is_acyclic(p PASS_LD) )
 	{ rc = TRIE_LOOKUP_CYCLIC;
@@ -481,7 +514,7 @@ trie_lookup(trie *trie, trie_node **nodep, Word k, int add ARG_LD)
 	  node = NULL;
 	} else
 	{ node = follow_node(trie, node, f->definition, add PASS_LD);
-	  pushWorkAgenda(&agenda, arity, f->arguments);
+	  pushWorkAgenda_P(&agenda, arity, f->arguments);
 	}
 	break;
       }
@@ -499,7 +532,7 @@ trie_lookup(trie *trie, trie_node **nodep, Word k, int add ARG_LD)
       }
     }
   }
-  clearTermAgenda(&agenda);
+  clearTermAgenda_P(&agenda);
   clear_vars(k, var_number PASS_LD);
 
   if ( rc == TRUE )
@@ -564,149 +597,17 @@ get_trie_form_node(trie_node *node)
 		 *    BUILD TERM FROM PATH	*
 		 *******************************/
 
-#define NVARS_FAST 100
-
-typedef struct
-{ term_agenda agenda;
-  int is_compound;
-  Word gp;					/* global pointer */
-  Word vp;					/* result location */
-  Word *varp;					/* variable pointers */
-  word result;					/* final term */
-  trie *trie;					/* trie we work on */
-  Word varp_buf[NVARS_FAST];			/* variable pointer buffer */
-} build_state;
-
-static int
-init_build_state(build_state *state, trie *trie,
-		 size_t gsize, unsigned int nvars ARG_LD)
-{ int rc;
-
-  if ( (rc=ensureGlobalSpace(gsize, ALLOW_GC)) != TRUE )
-    return raiseStackOverflow(rc);
-
-  DEBUG(MSG_TRIE_PUT_TERM,
-	Sdprintf("Creating build-state for %d vars\n", (int)nvars));
-
-  state->is_compound = FALSE;
-  state->vp   = &state->result;
-  state->gp   = gTop;
-  state->trie = trie;
-  state->varp = nvars <= NVARS_FAST
-		       ? state->varp_buf
-		       : PL_malloc(nvars*sizeof(*state->varp));
-  memset(state->varp, 0, nvars*sizeof(*state->varp));
-
-  return TRUE;
-}
-
-static void
-clear_build_state(build_state *state)
-{ if ( state->varp != state->varp_buf )
-    PL_free(state->varp);
-}
-
-static size_t
-key_gsize(trie *trie, word key)
-{ if ( tagex(key) == (TAG_ATOM|STG_GLOBAL) )
-    return arityFunctor(key)+1;
-  if ( isIndirect(key) )
-    return gsize_indirect(trie->indirects, key);
-
-  return 0;
-}
-
-static void
-max_gsize(size_t *gsize, trie *trie, word key)
-{ size_t gs = key_gsize(trie, key);
-  if ( gs > *gsize )
-    *gsize = gs;
-}
-
-static unsigned int
-key_nvar(word key)
-{ if ( tag(key) == TAG_VAR )
-    return (unsigned int)(key>>LMASK_BITS);
-  return 0;
-}
-
-static void
-max_nvar(unsigned int *nvars, word key)
-{ unsigned int nv = key_nvar(key);
-  if ( nv > *nvars )
-    *nvars = nv;
-}
-
-static int
-eval_key(build_state *state, word key ARG_LD)
-{ if ( tagex(key) == (TAG_ATOM|STG_GLOBAL) )
-  { size_t arity = arityFunctor(key);
-
-    *state->vp = consPtr(state->gp, TAG_COMPOUND|STG_GLOBAL);
-    DEBUG(MSG_TRIE_PUT_TERM,
-	  Sdprintf("Term %s at %s\n",
-		   functorName(key), print_addr(state->gp,NULL)));
-
-    *state->gp++ = key;
-    if ( !state->is_compound )
-    { initTermAgenda(&state->agenda, arity, state->gp);
-      state->is_compound = TRUE;
-    } else
-    { if ( !pushWorkAgenda(&state->agenda, arity, state->gp) )
-      { clearTermAgenda(&state->agenda);
-	return raiseStackOverflow(MEMORY_OVERFLOW);
-      }
-    }
-    state->gp += arity;
-  } else if ( tag(key) == TAG_VAR )
-  { unsigned int index = (unsigned int)(key>>LMASK_BITS) - 1;
-
-    DEBUG(MSG_TRIE_PUT_TERM,
-	  Sdprintf("var %d at %s\n", (int)index,
-		   print_addr(state->vp,NULL)));
-
-    if ( !state->varp[index] )
-    { setVar(*state->vp);
-      state->varp[index] = state->vp;
-    } else
-    { *state->vp = makeRefG(state->varp[index]);
-    }
-  } else
-  { DEBUG(MSG_TRIE_PUT_TERM,
-	  Sdprintf("%s at %s\n",
-		   print_val(key, NULL), print_addr(state->vp,NULL)));
-    if ( isAtom(key) )
-      pushVolatileAtom(key);
-    if ( !isIndirect(key) )
-    { *state->vp = key;
-    } else
-    { *state->vp = extern_indirect(state->trie->indirects,
-				   key, &state->gp PASS_LD);
-    }
-  }
-
-  if ( state->is_compound )
-    state->vp = nextTermAgendaNoDeRef(&state->agenda);
-
-  return TRUE;
-}
-
-
 #define MAX_FAST 256
 
 int
-put_trie_term(trie_node *node, term_t term ARG_LD)
+unify_trie_term(trie_node *node, term_t term ARG_LD)
 { word fast[MAX_FAST];
   Word keys = fast;
   size_t keys_allocated = MAX_FAST;
   size_t kc = 0;
   int rc = TRUE;
   trie *trie_ptr;
-  size_t gsize = 0;
-  unsigned int nvars = 0;
-  build_state state;
-  ssize_t i;
-
+  fid_t fid;
 						/* get the keys */
   for( ; node->parent; node = node->parent )
   { if ( kc == keys_allocated )
@@ -731,30 +632,29 @@ put_trie_term(trie_node *node, term_t term ARG_LD)
   trie_ptr = (trie *)((char*)node - offsetof(trie, root));
   assert(trie_ptr->magic == TRIE_MAGIC);
 
-  for(i=0; i<kc; i++)				/* compute sizes */
-  { unsigned nv;
+  fid = PL_open_foreign_frame();
+  for(;;)
+  { ukey_state ustate;
+    size_t i;
 
-    gsize += key_gsize(trie_ptr, keys[i]);
-    if ( (nv=key_nvar(keys[i])) > nvars )
-      nvars = nv;
-  }
-
-  if ( init_build_state(&state, trie_ptr, gsize, nvars PASS_LD) )
-  { for(i=kc-1; i>=0; i--)
-    { if ( !eval_key(&state, keys[i] PASS_LD) )
-      { rc = FALSE;
-	break;
+  retry:
+    init_ukey_state(&ustate, trie_ptr, valTermRef(term));
+    for(i=kc; i-- > 0; )
+    { if ( (rc=unify_key(&ustate, keys[i] PASS_LD)) != TRUE )
+      { destroy_ukey_state(&ustate);
+	if ( rc == FALSE )
+	  goto out;
+	PL_rewind_foreign_frame(fid);
+	if ( makeMoreStackSpace(rc, ALLOW_GC|ALLOW_SHIFT) )
+	  goto retry;
       }
     }
-
-    clear_build_state(&state);
-    if ( rc )
-    { gTop = state.gp;
-      *valTermRef(term) = state.result;
-      DEBUG(CHK_SECURE, PL_check_data(term));
-    }
+    destroy_ukey_state(&ustate);
+    break;
   }
 
+out:
+  PL_close_foreign_frame(fid);
   if ( keys != fast )
     free(keys);
 
@@ -1212,14 +1112,9 @@ PRED_IMPL("trie_term", 2, trie_term, 0)
 { PRED_LD
   void *ptr;
 
-  if ( PL_get_pointer_ex(A1, &ptr) )
-  { term_t v = PL_new_term_ref();
-
-    return ( put_trie_term(ptr, v PASS_LD) &&
-	     PL_unify(A2, v) );
-  }
-
-  return FALSE;
+  return ( PL_get_pointer_ex(A1, &ptr) &&
+	   unify_trie_term(ptr, A2 PASS_LD)
+	 );
 }
 
 
@@ -1233,6 +1128,195 @@ PRED_IMPL("trie_term", 2, trie_term, 0)
  * machine extension, using real choice points.
  */
 
+static void
+init_ukey_state(ukey_state *state, trie *trie, Word p)
+{ state->trie = trie;
+  state->ptr  = p;
+  state->umode = uread;
+  state->max_var_seen = 0;
+}
+
+static void
+destroy_ukey_state(ukey_state *state)
+{ if ( state->max_var_seen && state->vars != state->var_buf )
+    PL_free(state->vars);
+}
+
+static Word*
+find_var(ukey_state *state, size_t index)
+{ if ( index > state->max_var_seen )
+  { assert(index == state->max_var_seen+1);
+
+    if ( !state->max_var_seen )
+    { state->vars_allocated = NVARS_FAST;
+      state->vars = state->var_buf;
+    } else if ( index >= state->vars_allocated )
+    { if ( state->vars == state->var_buf )
+      { state->vars = PL_malloc(sizeof(*state->vars)*NVARS_FAST*2);
+	memcpy(state->vars, state->var_buf, sizeof(*state->vars)*NVARS_FAST);
+      } else
+      { state->vars = PL_realloc(state->vars,
+				 sizeof(*state->vars)*state->vars_allocated*2);
+      }
+      state->vars_allocated *= 2;
+    }
+    state->vars[index] = NULL;
+    state->max_var_seen = index;
+  }
+
+  return &state->vars[index];
+}
+
+
+static int
+unify_key(ukey_state *state, word key ARG_LD)
+{ Word p;
+
+  if ( key == TRIE_KEY_POP )
+  { Word wp = *--aTop;
+    state->umode = ((int)(uintptr_t)wp & uwrite);
+    state->ptr   = (Word)((intptr_t)wp&~uwrite);
+
+    DEBUG(MSG_TRIE_PUT_TERM,
+	  Sdprintf("U Popped %zd, mode=%d\n", state->ptr-gBase, state->umode));
+    return TRUE;
+  }
+
+  p = state->ptr;
+  if ( state->umode == uread )
+    deRef(p);
+
+  if ( tagex(key) == (TAG_ATOM|STG_GLOBAL) )
+  { size_t arity = arityFunctor(key);
+
+    DEBUG(MSG_TRIE_PUT_TERM,
+	  Sdprintf("U Pushed %s %zd, mode=%d\n",
+		   functorName(key), state->ptr+1-gBase, state->umode));
+    pushArgumentStack((Word)((intptr_t)(state->ptr + 1)|state->umode));
+
+    if ( state->umode == uwrite )
+    { Word t;
+
+      if ( (t=allocGlobalNoShift(arity+1)) )
+      { t[0] = key;
+	*p = consPtr(t, TAG_COMPOUND|STG_GLOBAL);
+	state->ptr = &t[1];
+	return TRUE;
+      } else
+	return GLOBAL_OVERFLOW;
+    } else
+    { if ( canBind(*p) )
+      { state->umode = uwrite;
+
+	if ( isAttVar(*p) )
+	{ Word t;
+	  word w;
+	  size_t i;
+
+	  if ( (t=allocGlobalNoShift(arity+1)) )
+	  { if ( !hasGlobalSpace(0) )
+	      return overflowCode(0);
+	    w = consPtr(&t[0], TAG_COMPOUND|STG_GLOBAL);
+	    t[0] = key;
+	    for(i=0; i<arity; i++)
+	      setVar(t[i+1]);
+	    assignAttVar(p, &w PASS_LD);
+	    state->ptr = &t[1];
+	    return TRUE;
+	  } else
+	    return GLOBAL_OVERFLOW;
+	} else
+	{ Word t;
+
+	  if ( (t=allocGlobalNoShift(arity+1)) )
+	  { if ( unlikely(tTop+1 >= tMax) )
+	      return  TRAIL_OVERFLOW;
+	    t[0] = key;
+	    Trail(p, consPtr(t, TAG_COMPOUND|STG_GLOBAL));
+	    state->ptr = &t[1];
+	    return TRUE;
+	  } else
+	    return GLOBAL_OVERFLOW;
+	}
+      } else if ( isTerm(*p) )
+      { Functor f = valueTerm(*p);
+
+	if ( f->definition == key )
+	{ state->ptr = &f->arguments[0];
+	  return TRUE;
+	} else
+	  return FALSE;
+      } else
+      { return FALSE;
+      }
+    }
+  } else if ( tag(key) == TAG_VAR )
+  { size_t index = (size_t)(key>>LMASK_BITS);
+    Word *v = find_var(state, index);
+
+    DEBUG(MSG_TRIE_PUT_TERM,
+	  { char b1[64]; char b2[64];
+	    Sdprintf("var %zd at %s (v=%p, *v=%s)\n",
+		     index,
+		     print_addr(state->ptr,b1),
+		     v, print_addr(*v,b2));
+	  });
+
+    if ( state->umode == uwrite )
+    { if ( !*v )
+      { setVar(*state->ptr);
+	*v = state->ptr;
+      } else
+      { *state->ptr = makeRefG(*v);
+      }
+    } else
+    { if ( !*v )
+      { *v = state->ptr;
+      } else
+      { int rc;
+
+	if ( (rc=unify_ptrs(state->ptr, *v, ALLOW_RETCODE PASS_LD)) != TRUE )
+	  return rc;
+      }
+    }
+
+    state->ptr++;
+    return TRUE;
+  } else
+  { word w;
+
+    DEBUG(MSG_TRIE_PUT_TERM,
+	  Sdprintf("%s at %s\n",
+		   print_val(key, NULL), print_addr(state->ptr,NULL)));
+
+    if ( isIndirect(key) )
+    { w = extern_indirect_no_shift(state->trie->indirects, key PASS_LD);
+      if ( !w )
+	return GLOBAL_OVERFLOW;
+    } else
+      w = key;
+
+    if ( state->umode == uwrite )
+    { if ( isAtom(w) )
+	pushVolatileAtom(w);
+      *p = w;
+    } else if ( canBind(*p) )
+    { if ( isAtom(w) )
+	pushVolatileAtom(w);
+
+      if ( hasGlobalSpace(0) )
+	bindConst(p, w);
+      else
+	return overflowCode(0);
+    } else if ( *p != w )
+      return FALSE;
+
+    state->ptr++;
+    return TRUE;
+  }
+}
+
+
 typedef struct trie_choice
 { union
   { void *any;
@@ -1240,49 +1324,55 @@ typedef struct trie_choice
   } choice;
   word key;
   trie_node *child;
-  size_t gsize;
-  unsigned int nvars;
-  struct trie_choice *next;
-  struct trie_choice *prev;
 } trie_choice;
 
 typedef struct
-{ trie_choice *head;		/* head of trie nodes */
-  trie_choice *tail;		/* tail of trie nodes */
-  trie        *trie;		/* trie we operate on */
+{ trie        *trie;		/* trie we operate on */
+  int	       allocated;
+  tmp_buffer   choicepoints;	/* Stack of trie state choicepoints */
 } trie_gen_state;
 
 
 static void
+init_trie_state(trie_gen_state *state, trie *trie)
+{ state->trie = trie;
+  state->allocated = FALSE;
+  initBuffer(&state->choicepoints);
+}
+
+
+#define base_choice(state) baseBuffer(&state->choicepoints, trie_choice)
+#define top_choice(state) topBuffer(&state->choicepoints, trie_choice)
+
+
+static void
 clear_trie_state(trie_gen_state *state)
-{ trie_choice *ch, *next;
+{ trie_choice *chp = base_choice(state);
+  trie_choice *top = top_choice(state);
 
-  for(ch=state->head; ch; ch=next)
-  { next = ch->next;
-
-    if ( ch->choice.table )
-      freeTableEnum(ch->choice.table);
-    PL_free(ch);
+  for(; chp < top; chp++)
+  { if ( chp->choice.table )
+      freeTableEnum(chp->choice.table);
   }
 
+  discardBuffer(&state->choicepoints);
+
   release_trie(state->trie);
+
+  if ( state->allocated )
+    freeForeignState(state, sizeof(*state));
 }
 
 
 trie_choice *
 add_choice(trie_gen_state *state, trie_node *node)
-{ trie_choice *ch = PL_malloc(sizeof(*ch));
-  trie_children children = node->children;
-  size_t gsize = state->tail ? state->tail->gsize : 0;
-  unsigned int nvars = state->tail ? state->tail->nvars : 0;
+{ trie_children children = node->children;
+  trie_choice *ch = allocFromBuffer(&state->choicepoints, sizeof(*ch));
 
   if ( children.any )
   { switch( children.any->type )
     { case TN_KEY:
       {	word key   = children.key->key;
-
-	max_nvar(&nvars, key);
-	gsize += key_gsize(state->trie, key);
 
 	ch->key    = key;
 	ch->child  = children.key->child;
@@ -1291,11 +1381,6 @@ add_choice(trie_gen_state *state, trie_node *node)
       }
       case TN_HASHED:
       { void *k, *v;
-	unsigned int maxchildvar;
-
-	if ( (maxchildvar=children.hash->nvars) > nvars )
-	  nvars = maxchildvar;
-	gsize += children.hash->gsize;
 
 	ch->choice.table = newTableEnum(children.hash->table);
         advanceTableEnum(ch->choice.table, &k, &v);
@@ -1311,17 +1396,6 @@ add_choice(trie_gen_state *state, trie_node *node)
     ch->child = node;
   }
 
-  ch->gsize = gsize;
-  ch->nvars = nvars;
-
-  ch->next = NULL;
-  ch->prev = state->tail;
-  if ( state->tail )
-    state->tail->next = ch;
-  else
-    state->head = ch;
-  state->tail = ch;
-
   return ch;
 }
 
@@ -1333,23 +1407,6 @@ descent_node(trie_gen_state *state, trie_choice *ch)
   }
 
   return ch->child->value != 0;
-}
-
-
-static trie_choice *
-previous_choice(trie_gen_state *state)
-{ trie_choice *ch = state->tail;
-
-  if ( ch->choice.table )
-    freeTableEnum(ch->choice.table);
-  state->tail = ch->prev;
-  if ( state->tail )
-    state->tail->next = NULL;
-  else
-    state->head = NULL;
-  PL_free(ch);
-
-  return state->tail;
 }
 
 
@@ -1372,54 +1429,50 @@ advance_node(trie_choice *ch)
 
 static int
 next_choice(trie_gen_state *state)
-{ trie_choice *ch;
+{ trie_choice *btm = base_choice(state);
+  trie_choice  *ch = top_choice(state)-1;
 
-  for( ch = state->tail; ch; ch = previous_choice(state) )
+  while(ch >= btm)
   { if ( advance_node(ch) &&
 	 descent_node(state, ch) )
       return TRUE;
+
+    if ( ch->choice.table )
+      freeTableEnum(ch->choice.table);
+
+    state->choicepoints.top = (char*)ch;
+    ch--;
   }
 
   return FALSE;
 }
 
 
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Unify term with the term represented a trie path (list of trie_choice).
+Returns one of TRUE, FALSE or *_OVERFLOW.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
 static int
-put_trie_path(term_t term, Word value, trie_gen_state *gstate ARG_LD)
-{ int rc = TRUE;
-  trie_choice *ch;
-  build_state bstate;
+unify_trie_path(term_t term, Word value, trie_gen_state *gstate ARG_LD)
+{ ukey_state ustate;
+  trie_choice *ch = base_choice(gstate);
+  trie_choice *top = top_choice(gstate);
 
-  if ( init_build_state(&bstate,
-			gstate->trie,
-			gstate->tail->gsize,
-			gstate->tail->nvars+1 PASS_LD) )
-  {
-#ifndef NDEBUG
-    Word gok = gTop + gstate->tail->gsize;
-#endif
+  init_ukey_state(&ustate, gstate->trie, valTermRef(term));
+  for( ; ch < top; ch++ )
+  { int rc;
 
-    for( ch = gstate->head; ch; ch = ch->next )
-    { if ( !eval_key(&bstate, ch->key PASS_LD) )
-      { rc = FALSE;
-	break;
-      }
-      if ( !ch->next )
-      { *value = ch->child->value;
-      }
+    if ( (rc=unify_key(&ustate, ch->key PASS_LD)) != TRUE )
+    { destroy_ukey_state(&ustate);
+      return rc;
     }
+  }
 
-    clear_build_state(&bstate);
-    if ( rc )
-    { assert(bstate.gp <= gok);
-      gTop = bstate.gp;
-      *valTermRef(term) = bstate.result;
-      DEBUG(CHK_SECURE, PL_check_data(term));
-    }
-  } else
-    rc = FALSE;
+  destroy_ukey_state(&ustate);
+  *value = ch[-1].child->value;
 
-  return rc;
+  return TRUE;
 }
 
 
@@ -1428,7 +1481,6 @@ PRED_IMPL("trie_gen", 3, trie_gen, PL_FA_NONDETERMINISTIC)
 { PRED_LD
   trie_gen_state state_buf;
   trie_gen_state *state;
-  term_t key;
   word value;
   fid_t fid;
 
@@ -1437,12 +1489,10 @@ PRED_IMPL("trie_gen", 3, trie_gen, PL_FA_NONDETERMINISTIC)
     { trie *trie;
 
       if ( get_trie(A1, &trie) )
-      { state = &state_buf;
-	memset(state, 0, sizeof(*state));
-
-	if ( trie->root.children.any )
+      { if ( trie->root.children.any )
 	{ acquire_trie(trie);
-	  state->trie = trie;
+	  state = &state_buf;
+	  init_trie_state(state, trie);
 	  if ( !descent_node(state, add_choice(state, &trie->root)) &&
 	       !next_choice(state) )
 	  { clear_trie_state(state);
@@ -1459,26 +1509,54 @@ PRED_IMPL("trie_gen", 3, trie_gen, PL_FA_NONDETERMINISTIC)
     case FRG_CUTTED:
       state = CTX_PTR;
       clear_trie_state(state);
-      freeForeignState(state, sizeof(*state));
       return TRUE;
     default:
       assert(0);
       return FALSE;
   }
 
-  key = PL_new_term_ref();
   fid = PL_open_foreign_frame();
+  for( ; !isEmptyBuffer(&state->choicepoints); next_choice(state) )
+  { int rc;
 
-  for( ; state->head; next_choice(state) )
-  { if ( !put_trie_path(key, &value, state PASS_LD) )
-    { PL_close_foreign_frame(fid);
+    for(;;)
+    { if ( (rc=unify_trie_path(A2, &value, state PASS_LD)) == TRUE )
+	break;
+
+      PL_rewind_foreign_frame(fid);
+      if ( rc == FALSE )
+	goto next;
+
+      if ( makeMoreStackSpace(rc, ALLOW_GC|ALLOW_SHIFT) )
+	continue;
+
+      clear_trie_state(state);
       return FALSE;				/* resource error */
     }
-    if ( PL_unify(A2, key) && unify_value(A3, value PASS_LD) )
+
+    DEBUG(CHK_SECURE, PL_check_data(A2));
+
+    if ( unify_value(A3, value PASS_LD) )
     { if ( next_choice(state) )
-      { if ( state == &state_buf )
-	{ state = allocForeignState(sizeof(*state));
-	  memcpy(state, &state_buf, sizeof(*state));
+      { if ( !state->allocated )
+	{ trie_gen_state *nstate = allocForeignState(sizeof(*state));
+	  TmpBuffer nchp = &nstate->choicepoints;
+	  TmpBuffer ochp =  &state->choicepoints;
+
+	  nstate->trie = state->trie;
+	  nstate->allocated = TRUE;
+	  if ( ochp->base == ochp->static_buffer )
+	  { size_t bytes = ochp->top - ochp->base;
+	    initBuffer(nchp);
+	    nchp->top  = nchp->base + bytes;
+	    memcpy(nchp->base, ochp->base, bytes);
+	  } else
+	  { nchp->base = ochp->base;
+	    nchp->top  = ochp->top;
+	    nchp->max  = ochp->max;
+	  }
+
+	  state = nstate;
 	}
 	PL_close_foreign_frame(fid);
 	ForeignRedoPtr(state);
@@ -1487,11 +1565,10 @@ PRED_IMPL("trie_gen", 3, trie_gen, PL_FA_NONDETERMINISTIC)
 	PL_close_foreign_frame(fid);
 	return TRUE;
       }
-    } else if ( PL_exception(0) )
-    { return FALSE;				/* error */
     } else
-    { PL_rewind_foreign_frame(fid);
-    }
+      PL_rewind_foreign_frame(fid);
+
+next:;
   }
 
   clear_trie_state(state);

@@ -34,11 +34,16 @@ the current git version.
 
 ### Getting the source
 
-The   source   imay   be    downloaded    as     a    tar    ball   from
-http://www.swi-prolog.org or downloaded using git.  The git sequencen is:
+The   source   may   be    downloaded    as     a    tar    ball    from
+http://www.swi-prolog.org or downloaded using git. The git sequence is:
 
     git clone https://github.com/SWI-Prolog/swipl-devel.git
+    cd swipl-devel
     git submodule update --init
+
+If not all modules are needed, one can clone/update particular ones as follows:
+
+    git submodule update --init packages/jpl packages/clib packages/sgml
 
 
 ### Building from source
@@ -79,31 +84,68 @@ If this fails, one of these measures may be appropriate:
 The default build type is `RelWithDebInfo`.  Alternatives may be selected
 using e.g.,
 
-    cmake -DCMAKE_BUILD_TYPE=Debug
-    cmake -DCMAKE_BUILD_TYPE=Release
+    cmake -DCMAKE_BUILD_TYPE=Debug -G Ninja ..
+    cmake -DCMAKE_BUILD_TYPE=Release -G Ninja ..
+
+## Install location
+
+To install in a particular   location, use `-DCMAKE_INSTALL_PREFIX`. For
+example, this will build SWI to be installed in `/usr/local/swipl-git`:
+
+    cmake -DCMAKE_INSTALL_PREFIX=/usr/local/swipl-git -G Ninja ..
+
+After    `sudo    ninja    install`,     `swipl`      will     be     in
+`/usr/local/swipl-git/bin/swipl`.
+
 
 ## Customizing SWI-Prolog
 
 By default the system configures all   features. Several cmake _options_
 allow for restricting the system.
 
-  | Option			  | Description                       |
-  | ----------------------------- | --------------------------------- |
-  | `-DMULTI_THREADED=OFF`        | Drop support for Prolog threads   |
-  | `-DUSE_SIGNALS=OFF`           | Drop signal support               |
-  | `-DUSE_GMP=OFF`               | Drop bignum and rational numbers  |
-  | `-DSWIPL_SHARED_LIB=OFF`      | Build Prolog kernel as static lib |
-  | `-DSWIPL_PACKAGES=OFF`        | Only build the core system        |
-  | `-DSWIPL_PACKAGES_BASIC=OFF`  | Drop all basic packages           |
-  | `-DSWIPL_PACKAGES_ODBC=OFF`   | Drop ODBC and CQL packages        |
-  | `-DSWIPL_PACKAGES_JAVA=OFF`   | Drop JPL Java interface           |
-  | `-DSWIPL_PACKAGES_X=OFF`      | Drop graphics (xpce)              |
-  | `-DBUILD_TESTING=OFF`         | Do not setup for ctest unit tests |
-  | `-DINSTALL_DOCUMENTATION=OFF` | Drop generating the HTML docs     |
+  | Option			  | Description                         |
+  | ----------------------------- | ----------------------------------- |
+  | `-DMULTI_THREADED=OFF`        | Drop support for Prolog threads     |
+  | `-DUSE_SIGNALS=OFF`           | Drop signal support                 |
+  | `-DUSE_GMP=OFF`               | Drop bignum and rational numbers    |
+  | `-DSWIPL_SHARED_LIB=OFF`      | Build Prolog kernel as static lib   |
+  | `-DSWIPL_INSTALL_IN_LIB=ON`   | Install libswipl.so in <prefix>/lib |
+  | `-DSWIPL_M32=ON`		  | Make 32-bit version on 64-bit Linux |
+  | `-DSWIPL_PACKAGES=OFF`        | Only build the core system          |
+  | `-DSWIPL_PACKAGES_BASIC=OFF`  | Drop all basic packages             |
+  | `-DSWIPL_PACKAGES_ODBC=OFF`   | Drop ODBC and CQL packages          |
+  | `-DSWIPL_PACKAGES_JAVA=OFF`   | Drop JPL Java interface             |
+  | `-DSWIPL_PACKAGES_X=OFF`      | Drop graphics (xpce)                |
+  | `-DBUILD_TESTING=OFF`         | Do not setup for ctest unit tests   |
+  | `-DINSTALL_TESTS=ON`          | Add tests to installed system       |
+  | `-DINSTALL_DOCUMENTATION=OFF` | Drop generating the HTML docs       |
 
 Note that packages for  which  the   prerequisites  cannot  be found are
 dropped automatically, as are packages  for   which  the sources are not
 installed.
+
+## Embedding SWI-Prolog in Java, C, C++, etc.
+
+If SWI-Prolog is to be embedded in another executable it must be able to
+find its home directory and the main   application  must be able to find
+the SWI-Prolog shared library `libswipl.so`   (extension  depends on the
+platform).  The following environment variables are commonly used:
+
+    - `SWI_HOME_DIR` should point at SWI-Prolog's main directory, e.g.
+      ``${CMAKE_INSTALL_PREFIX}/lib/swipl``
+    - The shared object search path should include the directory where
+      `libswipl.{so,dll,...}` resides.  The variable depends on the
+      platform.  Some popular names:
+
+      - `LD_LIBRARY_PATH` (ELF based systems such as Linux)
+      - `DYLD_LIBRARY_PATH` (MacOS)
+      - `PATH` (Windows)
+
+If you build SWI-Prolog  you  must   __remove  these  variables from the
+environment when building__. Failure  to  do   so  may  cause  the build
+process to use parts  of  an   incompatible  installed  system.  Running
+`cmake` warns if  such  an  environment   variable  is  found,  but  the
+environment must be cleaned when running `ninja` or `make`.
 
 ## Profile Guided Optimization
 
@@ -159,6 +201,14 @@ The cmake toolchain  config  files  (see   below)  search  for  Java  in
 
 ### WASM (Emscripten)
 
+__Note__: due to a  bug  in   the  current  Emscripten  directory access
+functions we need the _native friend_   mechanism  to create the library
+index. The flags below   include `-DSWIPL_NATIVE_FRIEND=build`, assuming
+you built a  native  executable  in   the  directory  `build`  below the
+sources. Adjust as necessary.
+
+    [Assumes native Prolog in `build`.  See note above]
+
     mkdir build.wasm
     cd build.wasm
     source ~/emsdk/emsdk_env.sh
@@ -172,7 +222,37 @@ The cmake toolchain  config  files  (see   below)  search  for  Java  in
 	  -DBUILD_SWIPL_LD=OFF \
 	  -DSWIPL_PACKAGES=OFF \
 	  -DINSTALL_DOCUMENTATION=OFF \
+	  -DSWIPL_NATIVE_FRIEND=build \
 	  -G Ninja ..
+
+### Building a 32-bit version on 64-bit Debian based Linux
+
+Building the 32-bit version on  a  64   bit  platform  can be useful for
+testing and creating  32-bit  .qlf  files   or  saved  states.  A fairly
+complete system is created using the configuration command below.
+
+    cmake -DSWIPL_M32=ON \
+	  -DSWIPL_PACKAGES_JAVA=OFF -DSWIPL_PACKAGES_QT=OFF \
+          -G Ninja ..
+
+### Cross-building for targets without an emulator
+
+In the above scenarios we have an  emulator (Wine, Node.js) that can run
+the compiled Prolog system  so  we  can   do  the  Prolog  steps  of the
+installation such as building  the  boot   file,  building  .qlf  files,
+library indexes and the documentation. On some  systems we do not have a
+suitable emulator. Experimental support is  provided using the following
+steps:
+
+  - Build a native Prolog system in a directory, say `native`.  This
+    version must have the same _word-size_ (32 or 64-bits) as the
+    cross-compiled target.  One the core Prolog system (no packages)
+    is required and the system only needs to be build, i.e., the
+    _install_ step is allowed but not needed.  See above.
+
+  - Specify `-DSWIPL_NATIVE_FRIEND=native` for the cross-compilation.
+    This will cause the above system to be used for the cross
+    compilation steps.
 
 ## Development
 
@@ -231,6 +311,26 @@ extension).
     ?- test_arith.
     % PL-Unit: div ... done
     ...
+
+### Trapping memory issues using AddressSanitizer
+
+[AddressSanitizer](https://en.wikipedia.org/wiki/AddressSanitizer) is an
+extension to Clang and GCC to  instrument executables for finding common
+memory    management    issues.    It    traps     similar    bugs    as
+[Valgrind](http://valgrind.org/), but if a suspected   bug does not show
+up using one tool it might  be  worthwhile   to  try  the  other. A nice
+property of Valgrind is that it can   be used directly on the executable
+without recompilation. The downside is that   Valgrind makes the program
+run about 20 times slower. The slowdown   by AddressSanitizer is about a
+factor two. To compile for using with AddressSanitizer, do e.g.,
+
+    % mkdir build.sanitize
+    % cd build.sanitize
+    % cmake -DCMAKE_BUILD_TYPE=Sanitize -G Ninja ..
+    % ninja
+
+See also `cmake/BuildType.cmake` and `PL_halt()` in `src/pl-fli.c`.
+
 
 ## Packaging
 
@@ -318,4 +418,13 @@ generate the Ubuntu PPA releases.
 
 ## Issues
 
-  - Provide a FindSWIPL.cmake?
+- Provide a FindSWIPL.cmake?
+- Problem compiling SWI when another SWI is installed already and you
+  have environment variables set to facilitate e.g., embedding in Java.
+  The variable names and possibly conflicting values depend on the OS.
+  See [issue](https://github.com/SWI-Prolog/swipl-devel/issues/435)
+
+
+
+
+

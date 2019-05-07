@@ -193,8 +193,9 @@ linger(linger_list** list, void (*unalloc)(void *), void *object)
 { linger_list *c = allocHeapOrHalt(sizeof(*c));
   linger_list *o;
 
-  c->object  = object;
-  c->unalloc = unalloc;
+  c->generation	= global_generation();
+  c->object	= object;
+  c->unalloc	= unalloc;
 
   do
   { o = *list;
@@ -203,13 +204,21 @@ linger(linger_list** list, void (*unalloc)(void *), void *object)
 }
 
 void
-free_lingering(linger_list *list)
-{ linger_list *n;
+free_lingering(linger_list **list, gen_t generation)
+{ linger_list **p = list;
+  linger_list *c = *list;
 
-  for(; list; list=n)
-  { n = list->next;
-    (*list->unalloc)(list->object);
-    freeHeap(list, sizeof(*list));
+  while ( c )
+  { if ( c->generation < generation )
+    { while ( !COMPARE_AND_SWAP(p, c, c->next) )
+      { p = &(*p)->next;
+      }
+      (*c->unalloc)(c->object);
+      freeHeap(c, sizeof(*c));
+    } else
+    { p = &(*p)->next;
+    }
+    c = *p;
   }
 }
 
@@ -631,7 +640,7 @@ outOfStack(void *stack, stack_overflow_action how)
   { Sdprintf("[Thread %d]: %s-overflow: spare=%ld (def=%ld)\n"
 	     "Last resource exception:\n",
 	     PL_thread_self(), s->name, (long)s->spare, (long)s->def_spare);
-    print_backtrace_named("exception");
+    print_backtrace_named(msg);
   }
 
   enableSpareStacks();
@@ -642,7 +651,7 @@ outOfStack(void *stack, stack_overflow_action how)
   switch(how)
   { case STACK_OVERFLOW_THROW:
     case STACK_OVERFLOW_RAISE:
-    { word ctx = push_overflow_context(s, 5);
+    { word ctx = push_overflow_context(s, 6);
 
       if ( gTop+5 < gMax )
       { Word p = gTop;

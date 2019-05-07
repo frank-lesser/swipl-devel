@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 2.8.12)
+cmake_minimum_required(VERSION 3.5)
 project(swipl)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/../cmake")
@@ -14,6 +14,7 @@ include(CheckSymbolExists)
 include(CheckTypeSize)
 include(AlignOf)
 include(CheckStructHasMember)
+include(CheckCCompilerFlag)
 
 find_package(ZLIB REQUIRED)
 if(USE_GMP)
@@ -39,11 +40,8 @@ get_filename_component(SWIPL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 set(SWIPL_LIBRARY_ROOT ${SWIPL_ROOT}/library)
 set(SWIPL_BOOT_ROOT ${SWIPL_ROOT}/boot)
 
-if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-  set(SWIPL_BOOT_FILE "${CMAKE_BINARY_DIR}/home/boot64.prc")
-else()
-  set(SWIPL_BOOT_FILE "${CMAKE_BINARY_DIR}/home/boot32.prc")
-endif()
+set(SWIPL_BOOT_BASE "boot.prc")
+set(SWIPL_BOOT_FILE "${CMAKE_BINARY_DIR}/home/${SWIPL_BOOT_BASE}")
 
 # Tools (swipl-ld)
 string(REPLACE "." "" SO_EXT ${CMAKE_SHARED_MODULE_SUFFIX})
@@ -97,7 +95,7 @@ if(WIN32)
   set(SRC_SWIPL_LD ${SRC_SWIPL_LD} os/windows/uxnt.c)
 endif()
 
-set(UNIX_SHELL "/bin/sh" CACHE STRING "Full path to Unix shell")
+set(POSIX_SHELL "/bin/sh" CACHE STRING "Full path to a POSIX compliant shell")
 
 ################
 # Prolog data files
@@ -110,7 +108,7 @@ set(SWIPL_DATA_DIRS
     ${SWIPL_DATA_INDEXED_DIRS}
     library/dialect library/dialect/swi library/dialect/eclipse
     library/dialect/hprolog library/dialect/sicstus library/dialect/iso
-    library/dialect/yap
+    library/dialect/yap library/dialect/xsb
     library/unicode library/lynx
     demo)
 
@@ -129,7 +127,7 @@ set(SWIPL_DATA_library explain.pl sort.pl prolog_config.pl
     quintus.pl edinburgh.pl ctypes.pl files.pl modules.pl
     edit.pl shell.pl check.pl heaps.pl console_input.pl
     tty.pl readln.pl readutil.pl make.pl hotfix.pl option.pl
-    oset.pl ordsets.pl occurs.pl lists.pl pprint.pl
+    oset.pl ordsets.pl occurs.pl lists.pl pprint.pl atom.pl
     www_browser.pl url.pl utf8.pl main.pl assoc.pl nb_set.pl
     threadutil.pl qpforeign.pl dif.pl when.pl ugraphs.pl
     checklast.pl checkselect.pl operators.pl date.pl
@@ -165,12 +163,12 @@ set(SWIPL_DATA_library_lynx format.pl html_style.pl html_text.pl
 set(SWIPL_DATA_library_clp bounds.pl clp_events.pl clp_distinct.pl
     simplex.pl clpfd.pl clpb.pl)
 
-set(SWIPL_DATA_library_dcg basics.pl)
+set(SWIPL_DATA_library_dcg basics.pl high_order.pl)
 
 set(SWIPL_DATA_library_unicode blocks.pl unicode_data.pl)
 
 set(SWIPL_DATA_library_dialect bim.pl commons.pl hprolog.pl ifprolog.pl
-    sicstus.pl yap.pl)
+    sicstus.pl yap.pl xsb.pl)
 
 set(SWIPL_DATA_library_dialect_swi syspred_options.pl)
 set(SWIPL_DATA_library_dialect_eclipse test_util_iso.pl)
@@ -179,8 +177,10 @@ set(SWIPL_DATA_library_dialect_sicstus arrays.pl block.pl lists.pl
     README.TXT sockets.pl swipl-lfr.pl system.pl terms.pl timeout.pl)
 set(SWIPL_DATA_library_dialect_iso iso_predicates.pl)
 set(SWIPL_DATA_library_dialect_yap README.TXT)
+set(SWIPL_DATA_library_dialect_xsb README.md source.pl basics.pl machine.pl
+    storage.pl ordsets.pl intern.pl string.pl tables.pl)
 
-set(SWIPL_DATA_demo likes.pl README)
+set(SWIPL_DATA_demo likes.pl README.md)
 
 # ${PL_LIB_FILES_ALL} holds all files from the library that are indexed
 # ${PL_LIB_INDEX} holds the index file
@@ -376,14 +376,21 @@ set(PROFILE_GUIDED_OPTIMIZATION OFF
     "Profile guided optimization mode")
 
 set(PGO_DIR ${CMAKE_BINARY_DIR}/PGO-data)
-set(PGO_GENERATE_FLAGS
-    -fprofile-generate
-    -fprofile-dir=${PGO_DIR}
-    -Wno-maybe-uninitialized)
-set(PGO_USE_FLAGS
-    -fprofile-use
-    -fprofile-dir=${PGO_DIR}
-    -Wno-maybe-uninitialized)
+
+if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+  set(PGO_GENERATE_FLAGS -fprofile-generate=${PGO_DIR})
+  set(PGO_USE_FLAGS      -fprofile-use=${PGO_DIR}/swipl.profdata)
+  get_filename_component(CMAKE_C_COMPILER_DIR ${CMAKE_C_COMPILER} DIRECTORY)
+  find_program(LLVM_PROFDATA llvm-profdata
+	       HINTS ${CMAKE_C_COMPILER_DIR})
+  add_custom_target(pgo_data
+		    ${LLVM_PROFDATA} merge -output=${PGO_DIR}/swipl.profdata ${PGO_DIR}/*.profraw)
+else()
+  set(PGO_CFLAGS_EXTRA   -Wno-maybe-uninitialized "-fprofile-dir=${PGO_DIR}")
+  set(PGO_GENERATE_FLAGS -fprofile-generate ${PGO_CFLAGS_EXTRA})
+  set(PGO_USE_FLAGS      -fprofile-use ${PGO_CFLAGS_EXTRA})
+  add_custom_target(pgo_data)
+endif()
 
 set(PGO_TARGETS swipl libswipl)
 
@@ -437,7 +444,8 @@ endif(0)
 add_custom_target(check
     COMMAND ${PROG_SWIPL} -q -g test -t halt ${CMAKE_CURRENT_SOURCE_DIR}/test.pl)
 
-set(SWIPL_TEST_DIRS unprotected core attvar library charset eclipse clp
+set(SWIPL_TEST_DIRS unprotected core attvar tabling library charset eclipse clp
+    xsb/basic_tests xsb/ai_tests xsb/neg_tests
     GC save)
 if(MULTI_THREADED)
   set(SWIPL_TEST_DIRS ${SWIPL_TEST_DIRS} thread)
@@ -449,6 +457,14 @@ foreach(test ${SWIPL_TEST_DIRS})
   add_test(NAME swipl:${test}
 	   COMMAND ${PROG_SWIPL} -q ${CMAKE_CURRENT_SOURCE_DIR}/test.pl --no-core ${test})
 endforeach()
+
+if(INSTALL_TESTS)
+   #Copy core tests to the installation
+   install(DIRECTORY   ${CMAKE_CURRENT_SOURCE_DIR}/Tests
+           DESTINATION ${INSTALL_TESTS_DIR})
+   install(FILES       ${CMAKE_CURRENT_SOURCE_DIR}/test.pl
+           DESTINATION ${INSTALL_TESTS_DIR}/)
+endif()
 
 # Populate parms.h, making the compilation environment known to Prolog
 include(Params)
@@ -464,6 +480,16 @@ else()
   set(LIBSWIPL_DIR ${SWIPL_INSTALL_ARCH_LIB})
 endif()
 
+# Make sure tmp directory exists
+#
+# This is used on Android, where there  is normally no TMP directory and
+# the choosen location is not shared  with   any  other  users, since on
+# Android every application is its own user.
+
+if(NOT IS_DIRECTORY ${SWIPL_TMP_DIR} AND ANDROID)
+ install(DIRECTORY DESTINATION ${SWIPL_TMP_DIR})
+endif()
+
 install(TARGETS swipl libswipl
 	RUNTIME DESTINATION ${SWIPL_INSTALL_ARCH_EXE}
         LIBRARY DESTINATION ${LIBSWIPL_DIR}
@@ -472,6 +498,7 @@ install(TARGETS swipl libswipl
 install(FILES ${SWIPL_BOOT_FILE}
 	DESTINATION ${SWIPL_INSTALL_PREFIX}
 )
+
 foreach(d ${SWIPL_DATA_DIRS})
     string(REGEX REPLACE "/" "_" filevar ${d})
     prepend(files ${SWIPL_ROOT}/${d} ${SWIPL_DATA_${filevar}})

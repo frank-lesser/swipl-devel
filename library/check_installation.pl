@@ -35,8 +35,11 @@
 
 :- module(check_installation,
           [ check_installation/0,
-            check_installation/1                % -Issues
+            check_installation/1,               % -Issues
+            test_installation/0,
+            test_installation/1                 % +Options
           ]).
+:- use_module(option).
 
 /** <module> Check installation issues and features
 
@@ -135,6 +138,8 @@ issue_base('http://www.swi-prolog.org/build/issues/').
 %        are present (e.g., unbounded arithmetic support)
 %     2. Test that all standard libraries that depend on foreign
 %        code are present.
+%     3. provides a test_installation predicate to run the tests
+%        at runtime if the system was built with -DINSTALL_TESTS
 %
 %   If issues are found it prints a   diagnostic message with a link
 %   to a wiki page with additional information about the issue.
@@ -149,7 +154,7 @@ check_installation :-
         print_message(warning, installation(imperfect(Count)))
     ).
 
-%!  check_insmtallation(-Issues:list(pair)) is det.
+%!  check_installation(-Issues:list(pair)) is det.
 %
 %   As check_installation/0, but additionally  returns   a  list  of
 %   Component-Problem pairs. Problem is  one of `optional_not_found`
@@ -414,6 +419,58 @@ check_on_path :-
     ).
 
 
+		 /*******************************
+		 *           RUN TESTS		*
+		 *******************************/
+
+%!  test_installation is semidet.
+%!  test_installation(+Options) is semidet.
+%
+%   Run regression tests in the installed system. Requires the system to
+%   be built using
+%
+%	cmake -DINSTALL_TESTS=ON
+%
+%   Options processed:
+%
+%     - packages(+Boolean)
+%       When `false`, do not test the packages
+%     - package(+Package)
+%       Only test package package.
+
+test_installation :-
+    test_installation([]).
+
+test_installation(Options) :-
+    absolute_file_name(swi(test/test),
+                       TestFile,
+                       [ access(read),
+                         file_errors(fail),
+                         file_type(prolog)
+                       ]),
+    !,
+    test_installation_run(TestFile, Options).
+test_installation(_Options) :-
+    print_message(warning, installation(testing(no_installed_tests))).
+
+test_installation_run(TestFile, Options) :-
+    (   option(package(_), Options)
+    ->  merge_options(Options,
+                      [ core(false),
+                        subdirs(false)
+                      ], TestOptions)
+    ;   merge_options(Options,
+                      [ packages(true)
+                      ], TestOptions)
+    ),
+    load_files(user:TestFile),
+    current_prolog_flag(verbose, Old),
+    setup_call_cleanup(
+        set_prolog_flag(verbose, silent),
+        user:test([], TestOptions),
+        set_prolog_flag(verbose, Old)).
+
+
                  /*******************************
                  *            MESSAGES          *
                  *******************************/
@@ -513,6 +570,9 @@ message(jquery(found(Path))) -->
     [ '  jQuery from ~w'-[Path] ].
 message(jquery(not_found(File))) -->
     [ '  Cannot find jQuery (~w)'-[File] ].
+message(testing(no_installed_tests)) -->
+    [ '  Runtime testing is not enabled.', nl],
+    [ '  Please recompile the system with INSTALL_TESTS enabled.' ].
 
 
 public_executable(EXE, PublicProg) :-

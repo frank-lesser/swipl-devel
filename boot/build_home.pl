@@ -59,6 +59,7 @@ This file is normally installed in `CMAKE_BINARY_DIRECTORY/home`.
 
 cmake_binary_directory(BinDir) :-
     current_prolog_flag(executable, OsExe),
+    OsExe \== 'libswipl.dll',           % avoid dummy for embedded JPL test
     prolog_to_os_filename(Exe, OsExe),
     working_directory(PWD, PWD),
     exe_access(ExeAccess),
@@ -111,14 +112,14 @@ is_swi_prolog_stream(In) :-
     read_string(In, "\n", "\t ", Sep, Line),
     (   Sep == -1
     ->  !, fail
-    ;   sub_string(Line, _, _, _, "project(SWI-Prolog)")
+    ;   sub_string(Line, _, _, _, 'project(SWI-Prolog)')
     ),
     !.
 
 source_dir(SrcDir) -->
     string(_),
-    `SWI-Prolog_SOURCE_DIR:STATIC=`,
-    string(Codes), `\n`,
+    "SWI-Prolog_SOURCE_DIR:STATIC=",
+    string(Codes), "\n",
     !,
     skip_remaining,
     { atom_codes(SrcDir, Codes) }.
@@ -201,8 +202,11 @@ add_package_path(PkgBinDir) :-
 %   an installed version.
 
 set_version_info :-
-    cmake_binary_directory(BinDir),
-    version(format('    CMake built from "~w"', [BinDir])).
+    (   cmake_binary_directory(BinDir)
+    ->  version(format('    CMake built from "~w"', [BinDir]))
+    ;   current_prolog_flag(home, Home)
+    ->  version(format('    CMake built with home "~w"', [Home]))
+    ).
 
 :- initialization(set_version_info).
 

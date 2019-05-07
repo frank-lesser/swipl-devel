@@ -3,8 +3,9 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2008-2017, University of Amsterdam
+    Copyright (c)  2008-2019, University of Amsterdam
                               VU University Amsterdam
+			      CWI, Amsterdam
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -3705,6 +3706,13 @@ VMI(I_FOPEN, 0, 0, ())
   { ffr = (FliFrame)argFrameP(FR, DEF->functor->arity);
   }
 
+#if O_DEBUG
+  if ( exception_term )
+  { Sdprintf("Exception at entry of %s\n",  predicateName(DEF));
+    PL_write_term(Serror, exception_term, 1200, PL_WRT_NEWLINE);
+  }
+#endif
+
   assert(DEF->functor->arity < 100);
 
   lTop = (LocalFrame)(ffr+1);
@@ -4147,7 +4155,7 @@ VMI(I_CALLCLEANUP, 0, 0, ())
     THROW_EXCEPTION;
 
   newChoice(CHP_CATCH, FR PASS_LD);
-  set(FR, FR_WATCHED|FR_CLEANUP);
+  set(FR, FR_CLEANUP);
 				/* = B_VAR1 */
   *argFrameP(lTop, 0) = linkVal(argFrameP(FR, 1));
 
@@ -4330,9 +4338,6 @@ again:
        !resourceException(exception_term PASS_LD) )
   { int rc;
 
-    SAVE_REGISTERS(qid);
-    exceptionUnwindGC();
-    LOAD_REGISTERS(qid);
     SAVE_REGISTERS(qid);
     rc = exception_hook(qid, consTermRef(FR), catchfr_ref PASS_LD);
     LOAD_REGISTERS(qid);
@@ -4604,7 +4609,7 @@ again:
     LOAD_REGISTERS(qid);
     if ( PL_pending(SIG_GC) )
     { SAVE_REGISTERS(qid);
-      garbageCollect();
+      garbageCollect(LD->gc.stats.request);
       LOAD_REGISTERS(qid);
     }
     QF = QueryFromQid(qid);		/* may be shifted: recompute */
@@ -4672,6 +4677,11 @@ VMI(I_DEPARTATMV, VIF_BREAK, 3, (CA1_MODULE, CA1_VAR, CA1_PROC))
 }
 
 
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+This instruction deals with  @(Callable,  Module),   where  Module  is a
+variable. The module argument can be NULL.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
 VMI(I_CALLATMV, VIF_BREAK, 3, (CA1_MODULE, CA1_VAR, CA1_PROC))
 { Word ap;
   int iv;
@@ -4695,8 +4705,6 @@ VMI(I_CALLATMV, VIF_BREAK, 3, (CA1_MODULE, CA1_VAR, CA1_PROC))
     popTermRef();
     THROW_EXCEPTION;
   }
-
-  VMI_GOTO(I_CALLM);
 }
 
 #endif

@@ -3,8 +3,9 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2012-2017, University of Amsterdam
+    Copyright (c)  2012-2019, University of Amsterdam
                               VU University Amsterdam
+			      CWI, Amsterdam
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -340,7 +341,9 @@ memarea_limit(const char *s)
   if ( str_number((unsigned char *)s, &q, &n, FALSE) == NUM_OK &&
        intNumber(&n) )
   { switch((int)*q)
-    { case 'k':
+    { case 0:
+	return (size_t)n.value.i;
+      case 'k':
       case 'K':
 	return (size_t)n.value.i K;
       case 'm':
@@ -613,8 +616,9 @@ parseCommandLineOptions(int argc0, char **argv0, char **argvleft, int compile)
   int argcleft = 0;
 
   DEBUG(MSG_INITIALISE,
-	{ Sdprintf("parseCommandLineOptions");
-	  for(int i=0; i<argc0; i++)
+	{ int i;
+	  Sdprintf("parseCommandLineOptions");
+	  for(i=0; i<argc0; i++)
 	    Sdprintf("%s ", argv0[i]);
 	});
 
@@ -647,6 +651,12 @@ parseCommandLineOptions(int argc0, char **argv0, char **argvleft, int compile)
 	  { clearPrologFlagMask(PLFLAG_SIGNALS);
 	    clearPrologFlagMask(PLFLAG_GCTHREAD);
 	  }
+	} else
+	  return -1;
+      } else if ( (rc=is_bool_opt(s, "threads", &b)) )
+      { if ( rc == TRUE )
+	{ if ( !b )
+	    GD->options.nothreads = TRUE;
 	} else
 	  return -1;
       } else if ( (rc=is_bool_opt(s, "tty", &b)) )
@@ -779,16 +789,8 @@ replace_extension(char *path, const char *ext)
 Find the resource database.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-#ifndef BOOTFILE		/* normally delivered through config.h */
-#if SIZEOF_VOIDP == 4
-#define BOOTFILE "boot32.prc"
-#else
-#if SIZEOF_VOIDP == 8
-#define BOOTFILE "boot64.prc"
-#else
-#define BOOTFILE "boot.prc"
-#endif
-#endif
+#ifndef SWIPL_BOOT_BASE		/* normally delivered through config.h */
+#define SWIPL_BOOT_BASE "boot.prc"
 #endif
 
 static zipper *
@@ -842,10 +844,10 @@ openResourceDB(int argc, char **argv)
   }
 
   if ( systemDefaults.home )
-  { if ( strlen(systemDefaults.home)+1+strlen(BOOTFILE) < MAXPATHLEN )
+  { if ( strlen(systemDefaults.home)+1+strlen(SWIPL_BOOT_BASE) < MAXPATHLEN )
     { strcpy(tmp, systemDefaults.home);
       strcat(tmp, "/");
-      strcat(tmp, BOOTFILE);
+      strcat(tmp, SWIPL_BOOT_BASE);
 
       return zip_open_archive(tmp, flags);
     } else
@@ -948,6 +950,9 @@ PL_initialise(int argc, char **argv)
     }
     argc = done;
     argv = argvleft;
+  } else
+  { argc--;				/* saved state: only drop program */
+    argv++;
   }
 
   GD->cmdline.appl_argc = argc;
@@ -959,7 +964,7 @@ PL_initialise(int argc, char **argv)
     return FALSE;
 #ifdef O_PLMT
   aliasThread(PL_thread_self(), ATOM_thread, ATOM_main);
-  enableThreads(TRUE);
+  enableThreads(!GD->options.nothreads);
 #endif
   PL_set_prolog_flag("resource_database", PL_ATOM|FF_READONLY, rcpath);
   initialiseForeign(GD->cmdline.os_argc, /* PL_initialise_hook() functions */
@@ -1071,6 +1076,7 @@ usage(void)
     "    -O                       Optimised compilation\n",
     "    --tty[=bool]             (Dis)allow tty control\n",
     "    --signals[=bool]         Do (not) modify signal handling\n",
+    "    --threads[=bool]         Do (not) allow for threads\n",
     "    --debug[=bool]           Do (not) generate debug info\n",
     "    --quiet[=bool] (-q)      Do (not) suppress informational messages\n",
     "    --traditional            Disable extensions of version 7\n",
@@ -1442,7 +1448,7 @@ vsysError(const char *fm, va_list args)
   if ( gc_status.active )
   { Sfprintf(Serror,
 	    "\n[While in %ld-th garbage collection]\n",
-	    gc_status.collections);
+	    LD->gc.stats.totals.collections);
     unblockSignals(&LD->gc.saved_sigmask);
   }
 

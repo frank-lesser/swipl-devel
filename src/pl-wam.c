@@ -671,7 +671,10 @@ frameFinished(LocalFrame fr, enum finished reason ARG_LD)
     fr = (LocalFrame)valTermRef(fref);
   }
 
-  return callEventHook(PLEV_FRAMEFINISHED, fr);
+  if ( true(fr, FR_DEBUG) )
+    return callEventHook(PLEV_FRAMEFINISHED, fr);
+
+  return TRUE;
 }
 
 
@@ -1592,14 +1595,17 @@ resumeAfterException(int clear, Stack outofstack)
     setVar(*valTermRef(LD->exception.pending));
   }
 
-  LD->stacks.global.gced_size = 0;
-  LD->stacks.trail.gced_size  = 0;
+  if ( outofstack && outofstack->gc )
+  { LD->stacks.global.gced_size = 0;
+    LD->stacks.trail.gced_size  = 0;
+  }
 
   if ( !considerGarbageCollect((Stack)NULL) )
   { trimStacks((outofstack != NULL) PASS_LD);
-  } else if ( outofstack != NULL )
+  } else
   { trimStacks(FALSE PASS_LD);		/* just re-enable the spare stacks */
-    LD->trim_stack_requested = TRUE;	/* next time with resize */
+    if ( outofstack != NULL )
+      LD->trim_stack_requested = TRUE;	/* next time with resize */
   }
 
   LD->exception.processing = FALSE;
@@ -1615,7 +1621,7 @@ exceptionUnwindGC(void)
   LD->stacks.trail.gced_size = 0;
   LD->trim_stack_requested = TRUE;
   if ( considerGarbageCollect(NULL) )
-  { garbageCollect();
+  { garbageCollect(GC_EXCEPTION);
     enableSpareStacks();
   }
 }
@@ -2538,28 +2544,37 @@ restore_after_query(QueryFrame qf)
 }
 
 
-void
+int
 PL_cut_query(qid_t qid)
 { GET_LD
   QueryFrame qf = QueryFromQid(qid);
+  int rc = TRUE;
 
   DEBUG(CHK_SECURE, assert(qf->magic == QID_MAGIC));
   if ( qf->foreign_frame )
     PL_close_foreign_frame(qf->foreign_frame);
 
   if ( false(qf, PL_Q_DETERMINISTIC) )
-  { discard_query(qid PASS_LD);
+  { int exbefore = (exception_term != 0);
+
+    discard_query(qid PASS_LD);
     qf = QueryFromQid(qid);
+    if ( !exbefore && exception_term != 0 )
+      rc = FALSE;
   }
 
   restore_after_query(qf);
   qf->magic = 0;			/* disqualify the frame */
+
+  return rc;
 }
 
 
-void
+int
 PL_close_query(qid_t qid)
-{ if ( qid != 0 )
+{ int rc = TRUE;
+
+  if ( qid != 0 )
   { GET_LD
     QueryFrame qf = QueryFromQid(qid);
 
@@ -2568,8 +2583,12 @@ PL_close_query(qid_t qid)
       PL_close_foreign_frame(qf->foreign_frame);
 
     if ( false(qf, PL_Q_DETERMINISTIC) )
-    { discard_query(qid PASS_LD);
+    { int exbefore = (exception_term != 0);
+
+      discard_query(qid PASS_LD);
       qf = QueryFromQid(qid);
+      if ( !exbefore && exception_term != 0 )
+	rc = FALSE;
     }
 
     if ( !(qf->exception && true(qf, PL_Q_PASS_EXCEPTION)) )
@@ -2578,6 +2597,8 @@ PL_close_query(qid_t qid)
     restore_after_query(qf);
     qf->magic = 0;			/* disqualify the frame */
   }
+
+  return rc;
 }
 
 

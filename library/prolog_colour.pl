@@ -3,8 +3,9 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org/projects/xpce/
-    Copyright (c)  2011-2018, University of Amsterdam
+    Copyright (c)  2011-2019, University of Amsterdam
                               VU University Amsterdam
+                              CWI, Amsterdam
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -1168,12 +1169,15 @@ expand_meta(MetaSpec, M:Goal, M:Expanded) :-
     expand_meta(MetaSpec, Goal, Expanded).
 expand_meta(MetaSpec, Goal, Expanded) :-
     integer(MetaSpec),
-    callable(Goal),
-    !,
-    length(Extra, MetaSpec),
-    Goal =.. List0,
-    append(List0, Extra, List),
-    Expanded =.. List.
+    MetaSpec > 0,
+    (   atom(Goal)
+    ->  functor(Expanded, Goal, MetaSpec)
+    ;   compound(Goal)
+    ->  compound_name_arguments(Goal, Name, Args0),
+        length(Extra, MetaSpec),
+        append(Args0, Extra, Args),
+        compound_name_arguments(Expanded, Name, Args)
+    ).
 
 %!  colourise_setof(+Term, +TB, +Pos)
 %
@@ -1714,17 +1718,19 @@ colourise_meta_declaration(M:Head, Extra, TB,
                                          [ MP,
                                            term_position(_,_,FF,FT,ArgPos)
                                          ])) :-
+    compound(Head),
     !,
     colourise_module(M, TB, MP),
     colour_item(functor, TB, QF-QT),
     colour_item(goal(extern(M),Head), TB, FF-FT),
-    Head =.. [_|Args],
+    compound_name_arguments(Head, _, Args),
     colourise_meta_decls(Args, Extra, TB, ArgPos).
 colourise_meta_declaration(Head, Extra, TB, term_position(_,_,FF,FT,ArgPos)) :-
+    compound(Head),
     !,
     goal_classification(TB, Head, [], Class),
     colour_item(goal(Class, Head), TB, FF-FT),
-    Head =.. [_|Args],
+    compound_name_arguments(Head, _, Args),
     colourise_meta_decls(Args, Extra, TB, ArgPos).
 colourise_meta_declaration([H|T], Extra, TB, list_position(LF,LT,[HP],TP)) :-
     !,
@@ -2055,6 +2061,7 @@ goal_colours(discontiguous(_),       built_in-[predicates]).
 goal_colours(multifile(_),           built_in-[predicates]).
 goal_colours(volatile(_),            built_in-[predicates]).
 goal_colours(public(_),              built_in-[predicates]).
+goal_colours(table(_),               built_in-[predicates]).
 goal_colours(meta_predicate(_),      built_in-[meta_declarations]).
 goal_colours(consult(_),             built_in-[file]).
 goal_colours(include(_),             built_in-[file]).

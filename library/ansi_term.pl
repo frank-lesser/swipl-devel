@@ -53,7 +53,23 @@ the following:
 @see    http://en.wikipedia.org/wiki/ANSI_escape_code
 */
 
-:- create_prolog_flag(color_term, true, [type(boolean)]).
+color_term_flag_default(true) :-
+    stream_property(user_input, tty(true)),
+    stream_property(user_error, tty(true)),
+    stream_property(user_output, tty(true)),
+    \+ getenv('TERM', dumb),
+    !.
+color_term_flag_default(false).
+
+init_color_term_flag :-
+    color_term_flag_default(Default),
+    create_prolog_flag(color_term, Default,
+                       [ type(boolean),
+                         keep(true)
+                       ]).
+
+:- init_color_term_flag.
+
 
 :- meta_predicate
     keep_line_pos(+, 0).
@@ -228,9 +244,11 @@ ansi_color(default, 9).
 %   Hook implementation that deals with  ansi(+Attr, +Fmt, +Args) in
 %   message specifications.
 
-prolog:message_line_element(S, ansi(Attr, Fmt, Args)) :-
+prolog:message_line_element(S, ansi(Class, Fmt, Args)) :-
+    class_attrs(Class, Attr),
     ansi_format(S, Attr, Fmt, Args).
-prolog:message_line_element(S, ansi(Attr, Fmt, Args, Ctx)) :-
+prolog:message_line_element(S, ansi(Class, Fmt, Args, Ctx)) :-
+    class_attrs(Class, Attr),
     ansi_format(S, Attr, Fmt, Args),
     (   nonvar(Ctx),
         Ctx = ansi(_, RI-RA)
@@ -255,12 +273,20 @@ prolog:message_line_element(S, end(Ctx)) :-
     keep_line_pos(S, write(S, Reset)).
 
 level_attrs(Level,         Attrs) :-
-    user:message_property(Level, color(Attrs)).
+    user:message_property(Level, color(Attrs)),
+    !.
 level_attrs(informational, fg(green)).
 level_attrs(information,   fg(green)).
 level_attrs(debug(_),      fg(blue)).
 level_attrs(warning,       fg(red)).
 level_attrs(error,         [fg(red),bold]).
+
+class_attrs(Class, Attrs) :-
+    user:message_property(Class, color(Attrs)),
+    !.
+class_attrs(code, fg(blue)) :-
+    !.
+class_attrs(Attrs, Attrs).
 
 keep_line_pos(S, G) :-
     stream_property(S, position(Pos)),

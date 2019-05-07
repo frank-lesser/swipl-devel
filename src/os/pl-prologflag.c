@@ -3,8 +3,9 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2011-2017, University of Amsterdam
+    Copyright (c)  2011-2019, University of Amsterdam
                               VU University Amsterdam
+			      CWI, Amsterdam
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -733,7 +734,14 @@ set_prolog_flag_unlocked(term_t key, term_t value, int flags)
       { debugstatus.showContext = val;
 #ifdef O_PLMT
       } else if ( k == ATOM_threads )
-      { if ( !(rval = enableThreads(val)) )
+      { if ( val )
+	{ rval = enableThreads(val);
+	  PL_LOCK(L_PLFLAG);
+	} else
+	{ PL_UNLOCK(L_PLFLAG);
+	  rval = enableThreads(val);
+	}
+	if ( !rval )
 	  break;			/* don't change value */
 #endif
       } else if ( k == ATOM_tty_control )
@@ -1346,9 +1354,10 @@ initPrologFlags(void)
   setPrologFlag("pipe", FT_BOOL, TRUE, 0);
 #endif
 #ifdef O_PLMT
-  setPrologFlag("threads",	FT_BOOL|FF_READONLY, TRUE, 0);
+  setPrologFlag("threads",	FT_BOOL, !GD->options.nothreads, 0);
   setPrologFlag("system_thread_id", FT_INTEGER|FF_READONLY, 0, 0);
   setPrologFlag("gc_thread",    FT_BOOL,
+		!GD->options.nothreads &&
 		truePrologFlag(PLFLAG_GCTHREAD), PLFLAG_GCTHREAD);
 #else
   setPrologFlag("threads",	FT_BOOL|FF_READONLY, FALSE, 0);
@@ -1407,6 +1416,7 @@ initPrologFlags(void)
 		GD->options.traditional ? "codes" : "string");
   setPrologFlag("back_quotes", FT_ATOM,
 		GD->options.traditional ? "symbol_char" : "codes");
+  setPrologFlag("portable_vmi", FT_BOOL, TRUE, PLFLAG_PORTABLE_VMI);
   setPrologFlag("traditional", FT_BOOL|FF_READONLY, GD->options.traditional, 0);
   setPrologFlag("unknown", FT_ATOM, "error");
   setPrologFlag("debug", FT_BOOL, FALSE, 0);
@@ -1424,6 +1434,9 @@ initPrologFlags(void)
   setPrologFlag("toplevel_prompt", FT_ATOM, "~m~d~l~! ?- ");
   setPrologFlag("file_name_variables", FT_BOOL, FALSE, PLFLAG_FILEVARS);
   setPrologFlag("fileerrors", FT_BOOL, TRUE, PLFLAG_FILEERRORS);
+#ifdef O_DEBUG
+  setPrologFlag("prolog_debug", FT_BOOL|FF_READONLY, TRUE, 0);
+#endif
 #ifdef __EMSCRIPTEN__
   setPrologFlag("emscripten", FT_BOOL|FF_READONLY, TRUE, 0);
 #else
@@ -1432,6 +1445,12 @@ initPrologFlags(void)
 #endif
 #ifdef __APPLE__
   setPrologFlag("apple", FT_BOOL|FF_READONLY, TRUE, 0);
+#endif
+#ifdef __ANDROID__
+  setPrologFlag("android", FT_BOOL|FF_READONLY, TRUE, 0);
+# ifdef __ANDROID_API__
+  setPrologFlag("android_api",FT_INTEGER|FF_READONLY, __ANDROID_API__);
+# endif
 #endif
 #endif
 
@@ -1456,15 +1475,7 @@ initPrologFlags(void)
 #ifdef O_MITIGATE_SPECTRE
   setPrologFlag("mitigate_spectre", FT_BOOL, FALSE, PLFLAG_MITIGATE_SPECTRE);
 #endif
-
-#if defined(__unix__)
-{ const char *env_shell = getenv("SHELL");
-
-  if ( !env_shell )
-    env_shell = UNIX_SHELL;
-  setPrologFlag("posix_shell", FT_ATOM, env_shell);
-}
-#endif
+  setPrologFlag("posix_shell", FT_ATOM, POSIX_SHELL);
 
   setTmpDirPrologFlag();
   setTZPrologFlag();

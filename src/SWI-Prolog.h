@@ -68,7 +68,7 @@ extern "C" {
 /* PLVERSION_TAG: a string, normally "", but for example "rc1" */
 
 #ifndef PLVERSION
-#define PLVERSION 70722
+#define PLVERSION 80105
 #endif
 #ifndef PLVERSION_TAG
 #define PLVERSION_TAG ""
@@ -394,8 +394,8 @@ PL_EXPORT(int)		PL_predicate_info(predicate_t pred,
 PL_EXPORT(qid_t)	PL_open_query(module_t m, int flags,
 				      predicate_t pred, term_t t0);
 PL_EXPORT(int)		PL_next_solution(qid_t qid) WUNUSED;
-PL_EXPORT(void)		PL_close_query(qid_t qid);
-PL_EXPORT(void)		PL_cut_query(qid_t qid);
+PL_EXPORT(int)		PL_close_query(qid_t qid);
+PL_EXPORT(int)		PL_cut_query(qid_t qid);
 PL_EXPORT(qid_t)	PL_current_query(void);
 
 			/* Simplified (but less flexible) call-back */
@@ -900,6 +900,7 @@ PL_EXPORT(IOSTREAM *)*_PL_streams(void);	/* base of streams */
 #define PL_WRT_BRACETERMS      0x20000	/* Write {A} as {}(A) */
 #define PL_WRT_NODICT	       0x40000	/* Do not write dicts in pretty syntax */
 #define PL_WRT_NODOTINATOM     0x80000	/* never write a.b unquoted */
+#define PL_WRT_NO_LISTS	       0x100000	/* Do not write lists as [...] */
 
 PL_EXPORT(int)	PL_write_term(IOSTREAM *s,
 			     term_t term,

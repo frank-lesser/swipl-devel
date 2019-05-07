@@ -296,7 +296,6 @@ static struct signame
    not supported by OS signals.  They start at offset 32.
 */
 
-  { SIG_EXCEPTION,     "prolog:exception",     0 },
 #ifdef SIG_ATOM_GC
   { SIG_ATOM_GC,       "prolog:atom_gc",       0 },
 #endif
@@ -472,7 +471,7 @@ dispatch_signal(int sig, int sync)
 
   if ( gc_status.active && sig < SIG_PROLOG_OFFSET )
   { fatalError("Received signal %d (%s) while in %ld-th garbage collection",
-	       sig, signal_name(sig), gc_status.collections);
+	       sig, signal_name(sig), LD->gc.stats.totals.collections);
   }
 
   if ( (LD->critical || (true(sh, PLSIG_SYNC) && !sync)) &&
@@ -529,7 +528,7 @@ dispatch_signal(int sig, int sync)
 
     PL_error(predname, arity, NULL, ERR_SIGNALLED, sig, signal_name(sig));
   } else if ( sh->handler )
-  {
+  { int ex_pending = (exception_term && !sync);
 #ifdef O_LIMIT_DEPTH
     uintptr_t olimit = depth_limit;
     depth_limit = DEPTH_NO_LIMIT;
@@ -543,11 +542,9 @@ dispatch_signal(int sig, int sync)
 	  Sdprintf("Handler %p finished (pending=0x%x,0x%x)\n",
 		   sh->handler, LD->signal.pending[0], LD->signal.pending[1]));
 
-    if ( exception_term && !sync )	/* handler: PL_raise_exception() */
-    { LD->signal.exception = PL_record(exception_term);
-      PL_raise(SIG_EXCEPTION);
-      exception_term = 0;
-    }
+    if ( !ex_pending && exception_term && !sync )	/* handler: PL_raise_exception() */
+      fatalError("Async exception handler for signal %s (%d) raised "
+		 "an exception", signal_name(sig), sig);
   }
 
   LD->signal.current = saved_current_signal;
@@ -691,26 +688,6 @@ initTerminationSignals(void)
 #endif /*HAVE_SIGNAL*/
 
 static void
-sig_exception_handler(int sig)
-{ GET_LD
-  (void)sig;
-
-  if ( HAS_LD && LD->signal.exception )
-  { record_t ex = LD->signal.exception;
-
-    LD->signal.exception = 0;
-
-    PL_put_variable(exception_bin);
-    PL_recorded(ex, exception_bin);
-    PL_erase(ex);
-    exception_term = exception_bin;
-
-    DEBUG(CHK_SECURE, checkData(valTermRef(exception_term)));
-  }
-}
-
-
-static void
 agc_handler(int sig)
 { GET_LD
   (void)sig;
@@ -725,9 +702,15 @@ static void
 gc_handler(int sig)
 { (void)sig;
 
-  garbageCollect();
+  garbageCollect(0);
 }
 
+static void
+gc_tune_handler(int sig)
+{ (void)sig;
+
+  call_tune_gc_hook();
+}
 
 static void
 cgc_handler(int sig)
@@ -806,8 +789,8 @@ initSignals(void)
   /* these signals are not related to Unix signals and can thus */
   /* be enabled always */
 
-  PL_signal(SIG_EXCEPTION|PL_SIGSYNC,     sig_exception_handler);
   PL_signal(SIG_GC|PL_SIGSYNC,	          gc_handler);
+  PL_signal(SIG_TUNE_GC|PL_SIGSYNC,	  gc_tune_handler);
   PL_signal(SIG_CLAUSE_GC|PL_SIGSYNC,     cgc_handler);
   PL_signal(SIG_PLABORT|PL_SIGSYNC,       abort_handler);
 #ifdef SIG_THREAD_SIGNAL
@@ -1237,8 +1220,7 @@ PRED_IMPL("$on_signal", 4, on_signal, 0)
     { unprepareSignal(sign);
     } else if ( a == ATOM_throw )
     { sh = prepareSignal(sign);
-      set(sh, PLSIG_THROW);
-      clear(sh, PLSIG_SYNC);
+      set(sh, PLSIG_THROW|PLSIG_SYNC);
       sh->handler   = NULL;
       sh->predicate = NULL;
     } else
@@ -1683,7 +1665,7 @@ set_stack_limit(size_t limit)
        limit < sizeStack(local) +
                sizeStack(global) +
                sizeStack(trail) )
-  { garbageCollect();
+  { garbageCollect(GC_USER);
     trimStacks(TRUE PASS_LD);
 
     if ( limit < sizeStack(local) +

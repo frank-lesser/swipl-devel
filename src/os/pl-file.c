@@ -47,7 +47,8 @@ handling times must be cleaned, but that not only holds for this module.
 /*#define O_DEBUG 1*/
 /*#define O_DEBUG_MT 1*/
 
-#ifdef __MINGW32__
+#ifdef __WINDOWS__
+#define _WIN32_WINNT 0x0600		/* Vista */
 #include <winsock2.h>
 #include <windows.h>
 #endif
@@ -751,8 +752,9 @@ PL_get_stream(term_t t, IOSTREAM **s, int flags)
 { GET_LD
   int myflags = SH_ERRORS|SH_ALIAS;
 
-  if ( flags&SIO_INPUT  ) myflags |= SH_INPUT;
-  if ( flags&SIO_OUTPUT ) myflags |= SH_OUTPUT;
+  if ( flags&SIO_INPUT   ) myflags |= SH_INPUT;
+  if ( flags&SIO_OUTPUT  ) myflags |= SH_OUTPUT;
+  if ( flags&SIO_NOERROR ) myflags &= ~SH_ERRORS;
   if ( !(flags&(SIO_INPUT|SIO_OUTPUT)) )
     myflags |= SH_NOPAIR;
 
@@ -1087,7 +1089,10 @@ reportStreamError(IOSTREAM *s)
       return FALSE;
 
     if ( (s->flags & SIO_FERR) )
-    { if ( s->exception )
+    { if ( exception_term )
+	return FALSE;
+
+      if ( s->exception )
       { fid_t fid;
 	term_t ex;
 	int rc;
@@ -4209,8 +4214,8 @@ do_close(IOSTREAM *s, int force)
   { if ( !s )
       return TRUE;
     if ( s == Sinput )
-      Sclearerr(s);
-    else if ( s == Soutput || s == Serror )
+    { Sclearerr(s);
+    } else if ( s == Soutput || s == Serror )
     { Sflush(s);
       Sclearerr(s);
     } else
@@ -4245,10 +4250,10 @@ pl_close(term_t stream, int force ARG_LD)
     if ( ref->read && ref->write )
     { assert(ref->read->references);
       assert(ref->write->references);
-      if ( ref->read && !ref->read->erased )
-	rc = do_close(getStream(ref->read), force);
       if ( ref->write && !ref->write->erased )
-	rc = do_close(getStream(ref->write), force) && rc;
+	rc = do_close(getStream(ref->write), force);
+      if ( ref->read && !ref->read->erased )
+	rc = do_close(getStream(ref->read), force) && rc;
     } else
     { if ( ref->read )
       { assert(ref->read->references);
@@ -5256,6 +5261,14 @@ PRED_IMPL("source_location", 2, source_location, 0)
 }
 
 
+static
+PRED_IMPL("$set_source_location", 2, set_source_location, 0)
+{ PRED_LD
+  return ( PL_get_atom_ex(A1, &source_file_name) &&
+	   PL_get_integer_ex(A2, &source_line_no) );
+}
+
+
 static int
 at_end_of_stream(term_t stream ARG_LD)
 { IOSTREAM *s;
@@ -5737,6 +5750,7 @@ BeginPredDefs(file)
   PRED_DEF("read_pending_codes", 3, read_pending_codes, 0)
   PRED_DEF("read_pending_chars", 3, read_pending_chars, 0)
   PRED_DEF("source_location", 2, source_location, 0)
+  PRED_DEF("$set_source_location", 2, set_source_location, 0)
   PRED_DEF("copy_stream_data", 3, copy_stream_data3, 0)
   PRED_DEF("copy_stream_data", 2, copy_stream_data2, 0)
   PRED_DEF("stream_pair", 3, stream_pair, 0)

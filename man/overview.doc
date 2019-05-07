@@ -381,6 +381,10 @@ details.  Note that the handler to unblock system calls is still
 installed. This can be prevented using \exam{--sigalert=0} additionally.
 See \cmdlineoption{--sigalert}.
 
+    \cmdlineoptionitem{--nothreads}{}
+Disable threading for the multi-threaded version at runtime.  See also
+the flags \prologflag{threads} and \prologflag{gc_thread}.
+
     \cmdlineoptionitem{--pldoc}{[=port]}
 Start the PlDoc documentation system on a free network port and launch
 the user's browser on \verb$http://localhost:$\arg{port}. If
@@ -644,7 +648,7 @@ variable with the latest binding. Example:
 
 \begin{figure}
 \begin{code}
-1 ?- maplist(plus(1), "hello", X).
+1 ?- maplist(plus(1), `hello`, X).
 X = [105,102,109,109,112].
 
 2 ?- format('~s~n', [$X]).
@@ -1166,6 +1170,17 @@ binding the variables to their name. Using this feature, F(x) can be
 turned into valid syntax for such script languages. Suggested by Robert
 van Engelen.  SWI-Prolog specific.
 
+    \prologflagitem{android}{bool}{r}
+If present and true, it indicates we are running on the
+Android OS. The flag is not present in other operating systems.
+
+    \prologflagitem{android_api}{integer}{r}
+If running on Android, it indicates the compile-time API
+Level defined by the C macro \verb$__ANDROID_API__$. It is not
+defined if running on other operating systems. The API level may
+or may not match the API level of the running device, since it is
+the API level at compile time.
+
     \prologflagitem{argv}{list}{rw}
 List is a list of atoms representing the application command line
 arguments. Application command line arguments are those that have
@@ -1624,11 +1639,15 @@ If true, \exam{open(pipe(command), mode, Stream)}, etc.\ are supported.
 Can be changed to disable the use of pipes in applications testing this
 feature.  Not recommended.
 
+    \prologflagitem{portable_vmi}{bool}{rw}
+If \const{true} (default), generate \fileext{qlf} files and saved states
+that run both on 32 bit and 64-bit hardware.  If \const{false}, some
+optimized virtual machine instructions are only used if the integer
+argument is within the range of a tagged integer for 32-bit machines.
+
     \prologflagitem{posix_shell}{atom}{rw}
-Path to a POSIX compatible shell. On POSIX systems this flag is
-initialised from the environment variable \const{SHELL}.  If this
-variable is not defined a default is used. This default is typically
-\file{/bin/sh}.
+Path to a POSIX compatible shell.  This default is typically
+\file{/bin/sh}.  This flag is used by shell/1 and qsave_program/2.
 
     \prologflagitem{print_write_options}{term}{rw}
 Specifies the options for write_term/2 used by print/1 and print/2.
@@ -1750,6 +1769,13 @@ Space reserved for storing answer tables for \jargon{tabled predicates}
 nodes in the answer tries.} When exceeded a
 \term{resource_error}{table_space} exception is raised.
 
+    \prologflagitem{threads}{bool}{rw}
+True when threads are supported.  If the system is compiled without
+thread support the value is \const{false} and read-only.  Otherwise
+the value is \const{true} unless the system was started with the
+\cmdlineoption{--nothreads}.  Threading may be disabled only if no
+threads are running.  See also the \prologflag{gc_thread} flag.
+
     \prologflagitem{timezone}{integer}{r}
 Offset in seconds west of GMT of the current time zone. Set at
 initialization time from the \const{timezone} variable associated with
@@ -1761,7 +1787,7 @@ and entry point (see \cmdlineoption{-g}, initialization/2 and
 \secref{plscript}. The initial value is \const{default}, starting a
 normal interactive session. This value may be changed using the command
 line option \cmdlineoption{-t}. The explicit value \const{prolog} is
-equavalent to \const{default}. If \term{initialization}{Goal,main} is
+equivalent to \const{default}. If \term{initialization}{Goal,main} is
 used and the toplevel is \const{default}, the toplevel is set to
 \const{halt} (see halt/0).
 
@@ -1946,6 +1972,13 @@ platform-specific version information as a list. \arg{Extra} is used for
     \prologflagitem{version_git}{atom}{r}
 Available if created from a git repository.  See \program{git-describe}
 for details.
+
+    \prologflagitem{windows}{bool}{r}
+If present and \const{true}, the operating system is MS-Windows.
+
+    \prologflagitem{wine_version}{atom}{r}
+If present, SWI-Prolog is the MS-Windows version running under
+the \href{https://www.winehq.org/}{Wine} emulator.
 
     \prologflagitem{warn_override_implicit_import}{bool}{rw}
 If \const{true} (default), a warning is printed if an implicitly
@@ -2380,7 +2413,7 @@ format('This is a long line that looks better if it was\
 \end{code}
 
 Note that SWI-Prolog also allows unescaped newlines to appear in quoted
-material.  This is not allowed be the ISO standard, but used to be
+material.  This is not allowed by the ISO standard, but used to be
 common practice before.
     \escapeitem{e}
 Escape character (\textsc{ASCII} 27). Not ISO, but widely supported.
@@ -2533,7 +2566,7 @@ Examples are the RDF library where code frequently specifies property
 and class names\footnote{Samer Abdallah suggested this feature based on
 experience with non-Prolog users using the RDF library.} and the R
 interface for specifying functions or variables that start with an
-uppercase character. Lexical databases were part of the terms start with
+uppercase character. Lexical databases where part of the terms start with
 an uppercase letter is another category were the readability of the code
 improves using this option.
 
@@ -2945,20 +2978,21 @@ specifies the used encoding that influences get_code/2 and put_code/2 as
 well as all the other text I/O predicates.
 
 The default encoding for files is derived from the Prolog flag
-\prologflag{encoding}, which is initialised from the environment. If the
-environment variable \const{LANG} ends in "UTF-8", this encoding is
-assumed. Otherwise the default is \const{text} and the translation is
-left to the wide-character functions of the C library.\footnote{The
-Prolog native UTF-8 mode is considerably faster than the generic
-mbrtowc() one.} The encoding can be specified explicitly in load_files/2
-for loading Prolog source with an alternative encoding, open/4 when
-opening files or using set_stream/2 on any open stream. For Prolog
-source files we also provide the encoding/1 directive that can be used
-to switch between encodings that are compatible with US-ASCII
-(\const{ascii}, \const{iso_latin_1}, \const{utf8} and many locales). See
-also \secref{intsrcfile} for writing Prolog files with non-US-ASCII
-characters and \secref{unicodesyntax} for syntax issues. For additional
-information and Unicode resources, please visit
+\prologflag{encoding}, which is initialised from
+\exam{setlocale(LC_CTYPE, NULL)} to one of \const{text}, \const{utf8} or
+\const{iso_latin_1}. One of the latter two is used if the encoding name
+is recognized, while \const{text} is used as default. Using
+\const{text}, the translation is left to the wide-character functions of
+the C library.\footnote{The Prolog native UTF-8 mode is considerably
+faster than the generic mbrtowc() one.} The encoding can be specified
+explicitly in load_files/2 for loading Prolog source with an alternative
+encoding, open/4 when opening files or using set_stream/2 on any open
+stream. For Prolog source files we also provide the encoding/1 directive
+that can be used to switch between encodings that are compatible with
+US-ASCII (\const{ascii}, \const{iso_latin_1}, \const{utf8} and many
+locales). See also \secref{intsrcfile} for writing Prolog files with
+non-US-ASCII characters and \secref{unicodesyntax} for syntax issues.
+For additional information and Unicode resources, please visit
 \url{http://www.unicode.org/}.
 
 SWI-Prolog currently defines and supports the following encodings:

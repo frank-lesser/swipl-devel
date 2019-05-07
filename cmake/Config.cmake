@@ -16,7 +16,9 @@ check_include_file(ieee754.h HAVE_IEEE754_H)
 check_include_file(libloaderapi.h HAVE_LIBLOADERAPI_H)
 check_include_file(limits.h HAVE_LIMITS_H)
 check_include_file(locale.h HAVE_LOCALE_H)
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
 check_include_file(malloc.h HAVE_MALLOC_H)
+endif()
 check_include_file(memory.h HAVE_MEMORY_H)
 check_include_file(ncurses/curses.h HAVE_NCURSES_CURSES_H)
 check_include_file(ncurses/term.h HAVE_NCURSES_TERM_H)
@@ -94,9 +96,8 @@ if(NOT SIZEOF_MP_BITCNT_T STREQUAL "")
   set(HAVE_MP_BITCNT_T 1)
 endif()
 
-alignof(int64_t c ALIGNOF_INT64_T)
-alignof(double c ALIGNOF_DOUBLE)
-alignof("void*" c ALIGNOF_VOIDP)
+include(AlignOf)
+alignof(ALIGNOF_INT64_T ALIGNOF_VOIDP ALIGNOF_DOUBLE)
 
 
 ################
@@ -208,6 +209,34 @@ check_function_exists(dossleep HAVE_DOSSLEEP)
 check_function_exists(clock_gettime HAVE_CLOCK_GETTIME)
 # threads and scheduling
 if(CMAKE_USE_PTHREADS_INIT)
+check_c_source_compiles(
+    "#include <sys/param.h>
+     #include <sys/cpuset.h>
+     int main() {}"
+    SYS_CPUSET_H_FOUND)
+if(SYS_CPUSET_H_FOUND)
+  check_c_source_compiles(
+      "#include <sys/param.h>
+       #include <sys/cpuset.h>
+       int main(int argc, char** argv)
+       {
+        (void)argv;
+       #ifndef CPU_ZERO
+        return ((int*)(&CPU_ZERO))[argc];
+       #else
+        (void)argc;
+        return 0;
+       #endif
+       }"
+      HAVE_SYS_CPUSET_H)
+  check_c_source_compiles(
+      "#include <sys/param.h>
+       #include <sys/cpuset.h>
+       typedef cpuset_t cpu_set_t;
+       int main() { cpu_set_t *set; CPU_ZERO(set);}"
+      HAVE_CPUSET_T)
+endif(SYS_CPUSET_H_FOUND)
+check_include_file(pthread_np.h HAVE_PTHREAD_NP_H)
 check_function_exists(pthread_attr_setaffinity_np HAVE_PTHREAD_ATTR_SETAFFINITY_NP)
 check_function_exists(pthread_getname_np HAVE_PTHREAD_GETNAME_NP)
 check_function_exists(pthread_getw32threadhandle_np HAVE_PTHREAD_GETW32THREADHANDLE_NP)
@@ -228,14 +257,31 @@ check_function_exists(sem_init HAVE_SEM_INIT)
 include(TestRecursiveMutex)
 
 if(HAVE_PTHREAD_SETNAME_NP)
-check_c_source_compiles(
-    "#include <pthread.h>\nint main()
-     { pthread_setname_np(0, \"myname\"); return 0;
-     }"
-    HAVE_PTHREAD_SETNAME_NP_WITH_TID)
-if(NOT HAVE_PTHREAD_SETNAME_NP_WITH_TID)
-  set(HAVE_PTHREAD_SETNAME_NP_WITHOUT_TID 1)
-endif()
+function(check_pthread_setname_np)
+  set(CMAKE_REQUIRED_FLAGS ${CMAKE_REQUIRED_FLAGS} -Werror)
+  check_c_source_compiles(
+      "#define _GNU_SOURCE
+       #include <pthread.h>\nint main()
+       { pthread_setname_np(0, \"myname\"); return 0;
+       }"
+      HAVE_PTHREAD_SETNAME_NP_WITH_TID)
+
+  check_c_source_compiles(
+      "#define _GNU_SOURCE
+       #include <pthread.h>
+       int main()
+       { pthread_setname_np(0, \"%s\", (void *)\"myname\"); return 0;
+       }"
+      HAVE_PTHREAD_SETNAME_NP_WITH_TID_AND_ARG)
+
+  if(HAVE_PTHREAD_SETNAME_NP_WITH_TID)
+    set(HAVE_PTHREAD_SETNAME_NP_WITH_TID 1 PARENT_SCOPE)
+  elseif(HAVE_PTHREAD_SETNAME_NP_WITH_TID_AND_ARG)
+    set(HAVE_PTHREAD_SETNAME_NP_WITH_TID_AND_ARG 1 PARENT_SCOPE)
+  endif()
+endfunction()
+check_pthread_setname_np()
+endif(HAVE_PTHREAD_SETNAME_NP)
 
 check_c_source_compiles(
     "#include <sys/types.h>
@@ -256,14 +302,19 @@ if(NOT HAVE_GETTID_MACRO)
       HAVE_GETTID_SYSCALL)
 endif()
 
-endif(HAVE_PTHREAD_SETNAME_NP)
 endif(CMAKE_USE_PTHREADS_INIT)
 # Windows
 check_function_exists(WSAPoll HAVE_WSAPOLL)
 check_function_exists(WinExec HAVE_WINEXEC)
 
 check_symbol_exists(F_SETLKW fcntl.h HAVE_F_SETLKW)
-check_symbol_exists(timezone time.h HAVE_VAR_TIMEZONE)
+
+check_c_source_compiles(
+    "#include <time.h>
+     extern long timezone;
+     int main() { return 0;}"
+     HAVE_VAR_TIMEZONE)
+
 check_symbol_exists(SIGPROF signal.h HAVE_SIGPROF)
 
 check_struct_has_member("struct tm" tm_gmtoff time.h HAVE_STRUCT_TIME_TM_GMTOFF)

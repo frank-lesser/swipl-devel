@@ -3,8 +3,9 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1997-2018, University of Amsterdam
+    Copyright (c)  1997-2019, University of Amsterdam
                               VU University Amsterdam
+                              CWI, Amsterdam
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -615,10 +616,12 @@ prolog_message(no_exported_op(Module, Op)) -->
 prolog_message(discontiguous((-)/2,_)) -->
     prolog_message(minus_in_identifier).
 prolog_message(discontiguous(Proc,Current)) -->
-    [ 'Clauses of ~p are not together in the source-file'-[Proc], nl ],
-    current_definition(Proc, '  Earlier definition at '),
-    [ '  Current predicate: ~p'-[Current], nl,
-      '  Use :- discontiguous ~p. to suppress this message'-[Proc]
+    [ 'Clauses of ', ansi(code, '~p', [Proc]),
+      ' are not together in the source-file', nl ],
+    current_definition(Proc, 'Earlier definition at '),
+    [ 'Current predicate: ', ansi(code, '~p', [Current]), nl,
+      'Use ', ansi(code, ':- discontiguous ~p.', [Proc]),
+      ' to suppress this message'
     ].
 prolog_message(decl_no_effect(Goal)) -->
     [ 'Deprecated declaration has no effect: ~p'-[Goal] ].
@@ -762,26 +765,6 @@ prolog_message(file_search(tried(Spec, Cond), Path)) -->
                  *              GC              *
                  *******************************/
 
-prolog_message(gc(start)) -->
-    thread_context,
-    [ 'GC: ', flush ].
-prolog_message(gc(done(G, T, Time, UG, UT, RG, RT))) -->
-    [ at_same_line,
-      'gained ~D+~D in ~3f sec; used ~D+~D; free ~D+~D'-
-      [G, T, Time, UG, UT, RG, RT]
-    ].
-prolog_message(shift_stacks(start(_L,_G,_T))) -->
-    thread_context,
-    [ 'Stack-shift: ', flush ].
-prolog_message(shift_stacks(done(Time, L, G, T))) -->
-    { LKB is L//1024,
-      GKB is G//1024,
-      TKB is T//1024
-    },
-    [ at_same_line,
-      'local: ~DKB, global: ~DKB, trail: ~DKB bytes (~2f sec)'-
-      [LKB, GKB, TKB, Time]
-    ].
 prolog_message(agc(start)) -->
     thread_context,
     [ 'AGC: ', flush ].
@@ -1581,10 +1564,12 @@ msg_property(query, stream(user_output)) :- !.
 msg_property(_, stream(user_error)) :- !.
 msg_property(error,
              location_prefix(File:Line,
-                             '~NERROR: ~w:~d:'-[File,Line], '~N\t')) :- !.
+                             '~NERROR: ~w:~d:'-[File,Line],
+                             '~NERROR:    ')) :- !.
 msg_property(warning,
              location_prefix(File:Line,
-                             '~NWarning: ~w:~d:'-[File,Line], '~N\t')) :- !.
+                             '~NWarning: ~w:~d:'-[File,Line],
+                             '~NWarning:    ')) :- !.
 msg_property(error,   wait(0.1)) :- !.
 
 msg_prefix(debug(_), Prefix) :-
@@ -1708,27 +1693,46 @@ line_element(S, nl) :-
     nl(S).
 line_element(S, prefix(Fmt-Args)) :-
     !,
-    format(S, Fmt, Args).
+    safe_format(S, Fmt, Args).
 line_element(S, prefix(Fmt)) :-
     !,
-    format(S, Fmt, []).
+    safe_format(S, Fmt, []).
 line_element(S, flush) :-
     !,
     flush_output(S).
 line_element(S, Fmt-Args) :-
     !,
-    format(S, Fmt, Args).
+    safe_format(S, Fmt, Args).
 line_element(S, ansi(_, Fmt, Args)) :-
     !,
-    format(S, Fmt, Args).
+    safe_format(S, Fmt, Args).
 line_element(S, ansi(_, Fmt, Args, _Ctx)) :-
     !,
-    format(S, Fmt, Args).
+    safe_format(S, Fmt, Args).
 line_element(_, begin(_Level, _Ctx)) :- !.
 line_element(_, end(_Ctx)) :- !.
 line_element(S, Fmt) :-
-    format(S, Fmt, []).
+    safe_format(S, Fmt, []).
 
+%!  safe_format(+Stream, +Format, +Args) is det.
+
+safe_format(S, Fmt, Args) :-
+    E = error(_,_),
+    catch(format(S,Fmt,Args), E,
+          format_failed(S,Fmt,Args,E)).
+
+format_failed(S, _Fmt, _Args, E) :-
+    E = error(io_error(_,S),_),
+    !,
+    throw(E).
+format_failed(S, Fmt, Args, error(E,_)) :-
+    format(S, '~N    [[ EXCEPTION while printing message ~q~n\c
+                        ~7|with arguments ~W:~n\c
+                        ~7|raised: ~W~n~4|]]~n',
+           [ Fmt,
+             Args, [quoted(true), max_depth(10)],
+             E, [quoted(true), max_depth(10)]
+           ]).
 
 %!  message_to_string(+Term, -String)
 %

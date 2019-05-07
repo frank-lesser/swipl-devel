@@ -3,7 +3,8 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2016, VU University Amsterdam
+    Copyright (c)  2016-2019, VU University Amsterdam
+			      CWI, Amsterdam
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -42,6 +43,7 @@ typedef enum
 } cluster_type;
 
 #define WORKLIST_MAGIC	0x67e9124e
+#define COMPONENT_MAGIC	0x67e9124f
 
 
 		 /*******************************
@@ -52,10 +54,23 @@ typedef struct worklist_set
 { buffer members;
 } worklist_set;
 
+typedef struct component_set
+{ buffer members;
+} component_set;
+
+typedef enum
+{ SCC_ACTIVE=0,
+  SCC_MERGED,
+  SCC_COMPLETED
+} scc_status;
+
 typedef struct tbl_component
-{ struct tbl_component *parent;
-  struct worklist_set *worklist;		/* Worklist of current query */
-  struct worklist_set *created_worklists;	/* Worklists created */
+{ int			magic;			/* COMPONENT_MAGIC */
+  scc_status	        status;			/* SCC_* */
+  struct tbl_component *parent;
+  component_set        *children;		/* Child components */
+  worklist_set         *worklist;		/* Worklist of current query */
+  worklist_set         *created_worklists;	/* Worklists created */
 } tbl_component;
 
 
@@ -77,6 +92,9 @@ typedef struct worklist
   int		magic;			/* WORKLIST_MAGIC */
   unsigned	executing : 1;		/* $tbl_wkl_work/3 in progress */
   unsigned	in_global_wl : 1;	/* already in global worklist */
+  unsigned	negative : 1;		/* this is a suspended negation */
+  unsigned	neg_complete : 1;	/* Negative node is completed */
+  unsigned	has_answers : 1;	/* Negative node has >= one answer */
 
   tbl_component*component;		/* component I belong to */
   trie	       *table;			/* table I belong to */

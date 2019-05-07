@@ -617,16 +617,18 @@ column_widths(Widths, MaxTableWidth, Widths) :-
     AutoWidth =< MaxTableWidth,
     !.
 column_widths(AutoWidths, MaxTableWidth, Widths) :-
-    length(AutoWidths, NCols),
-    member(Factor, [4,2,1,0.5,0.25]),
-    Keep is round(MaxTableWidth/NCols)*Factor,
-    aggregate_all(sum(W), (member(W,AutoWidths), W=<Keep), Narrow),
-    aggregate_all(count, (member(W,AutoWidths),W>Keep), NWide),
-    NWide > 0,
-    WideWidth is (MaxTableWidth-Narrow)/NWide,
-    WideWidth >= 2*Keep,
+    sort(0, >=, AutoWidths, Sorted),
+    append(Wrapped, Keep, Sorted),
+    sum_list(Keep, KeepWidth),
+    KeepWidth < MaxTableWidth/2,
+    length(Wrapped, NWrapped),
+    WideWidth is round((MaxTableWidth-KeepWidth)/NWrapped),
+    (   [KeepW|_] = Keep
+    ->  true
+    ;   KeepW = 0
+    ),
     !,
-    maplist(truncate_column(Keep,WideWidth), AutoWidths, Widths).
+    maplist(truncate_column(KeepW,WideWidth), AutoWidths, Widths).
 
 truncate_column(Keep, WideWidth, AutoWidth, Width) :-
     (   AutoWidth =< Keep
@@ -679,19 +681,31 @@ auto_column_width(State, Col, Width) :-
     max_list(Widths, Width).
 
 auto_cell_width(State, Cell, Width) :-
+    cell_colspan(Cell, 1),
+    !,
     format_cell_to_string(Cell, 1_000, State, String),
     split_string(String, "\n", "", Lines),
     maplist(string_length, Lines, LineW),
     max_list(LineW, Width0),
     Width is Width0 + State.margin_right.
+auto_cell_width(_, _, 0).
 
 %!  format_row(+ColWidths, +State, +MarginLeft, +Row)
 %
 %   Format a single row.
 
 format_row(ColWidths, State, MarginLeft, Row) :-
-    format_cells(ColWidths, 1, Row, State, Cells),
-    format_row_lines(1, ColWidths, Cells, MarginLeft).
+    hrule(Row, ColWidths, MarginLeft),
+    format_cells(ColWidths, CWSpanned, 1, Row, State, Cells),
+    format_row_lines(1, CWSpanned, Cells, MarginLeft).
+
+hrule(row(_, Attrs), ColWidths, MarginLeft) :-
+    attrs_classes(Attrs, Classes),
+    memberchk(hline, Classes),
+    !,
+    sum_list(ColWidths, RuleLen),
+    format('~N~t~*|~`-t~*+', [MarginLeft, RuleLen]).
+hrule(_, _, _).
 
 format_row_lines(LineNo, Widths, Cells, MarginLeft) :-
     nth_row_line(Widths, 1, LineNo, Cells, CellLines, Found),
@@ -722,26 +736,63 @@ nth_row_line([ColW|CWT], CellNo, LineNo, Cells, [CellLine-Pad|ColLines],
     nth_row_line(CWT, CellNo1, LineNo, Cells, ColLines, Found).
 
 
-%!  format_cells(+ColWidths, +Col0, +Row, +State, -Cells)
+%!  format_cells(+ColWidths, -CWSpanned, +Col0, +Row, +State, -Cells)
 %
 %   Format the cells for Row. The  resulting   Cells  list  is a list of
 %   cells, where each cell is a  list   of  strings, each representing a
 %   line.
 
-format_cells([], _, _, _, []).
-format_cells([HW|TW], Column, Row, State, [HC|TC]) :-
+format_cells([], [], _, _, _, []) :- !.
+format_cells(CWidths, [HW|TW], Column, Row, State, [HC|TC]) :-
     Row = row(Columns, _Attrs),
     nth1(Column, Columns, Cell),
-    format_cell_to_string(Cell, HW, State.put(pad, ' '), String),
+    cell_colspan(Cell, CWidths, HW, TW0),
+    cell_align(Cell, Align),
+    format_cell_to_string(Cell, HW, State.put(_{pad:' ', text_align:Align}), String),
     split_string(String, "\n", "", HC),
     Column1 is Column+1,
-    format_cells(TW, Column1, Row, State, TC).
+    format_cells(TW0, TW, Column1, Row, State, TC).
+
+cell_colspan(Cell, CWidths, HW, TW) :-
+    cell_colspan(Cell, Span),
+    length(SpanW, Span),
+    append(SpanW, TW, CWidths),
+    sum_list(SpanW, HW).
+
+cell_colspan(element(_,Attrs,_), Span) :-
+    (   memberchk(colspan=SpanA, Attrs),
+        atom_number(SpanA, SpanN)
+    ->  Span = SpanN
+    ;   Span = 1
+    ).
+
+%!  cell_align(+Cell, -Align) is det.
+%
+%   Determine the cell alignment. Currently   supports  the (deprecated)
+%   HTML4  `align=Align`  possibility  and  very    naively  parsed  CSS
+%   ``text-align:center``, etc.
+
+cell_align(element(_,Attrs,_), Align) :-
+    (   memberchk(align=AlignA, Attrs)
+    ->  Align = AlignA
+    ;   memberchk(style=Style, Attrs),
+        style_css_attrs(Style, Props),
+        memberchk('text-align'(AlignA), Props)
+    ->  Align = AlignA
+    ;   Align = left
+    ).
 
 
 %!  format_cell_to_string(+Cell, +ColWidth, +State, -String) is det.
 %
 %   Format Cell to a String, given the state and column width.
 
+format_cell_to_string(element(_,_,[]), ColWidth, State, String) :-
+    Pad = State.get(pad),
+    !,
+    length(Chars, ColWidth),
+    maplist(=(Pad), Chars),
+    atomics_to_string(Chars, String).
 format_cell_to_string(Cell, ColWidth, State, String) :-
     setup_call_cleanup(
         init_nl(NlState),

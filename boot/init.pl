@@ -78,6 +78,7 @@ attempt to call the Prolog defined trace interceptor.
     volatile(:),
     thread_local(:),
     noprofile(:),
+    non_terminal(:),
     '$clausable'(:),
     '$iso'(:),
     '$hide'(:).
@@ -90,6 +91,7 @@ attempt to call the Prolog defined trace interceptor.
 %!  thread_local(+Spec) is det.
 %!  noprofile(+Spec) is det.
 %!  public(+Spec) is det.
+%!  non_terminal(+Spec) is det.
 %
 %   Predicate versions of standard  directives   that  set predicate
 %   attributes. These predicates bail out with an error on the first
@@ -103,6 +105,7 @@ volatile(Spec)           :- '$set_pattr'(Spec, pred, (volatile)).
 thread_local(Spec)       :- '$set_pattr'(Spec, pred, (thread_local)).
 noprofile(Spec)          :- '$set_pattr'(Spec, pred, (noprofile)).
 public(Spec)             :- '$set_pattr'(Spec, pred, (public)).
+non_terminal(Spec)       :- '$set_pattr'(Spec, pred, (non_terminal)).
 '$iso'(Spec)             :- '$set_pattr'(Spec, pred, (iso)).
 '$clausable'(Spec)       :- '$set_pattr'(Spec, pred, (clausable)).
 
@@ -164,6 +167,8 @@ public(Spec)             :- '$set_pattr'(Spec, pred, (public)).
 
 '$hide'(Pred) :-
     '$set_predicate_attribute'(Pred, trace, false).
+
+:- '$iso'(((dynamic)/1, (multifile)/1, (discontiguous)/1)).
 
 
                 /********************************
@@ -1457,7 +1462,7 @@ compiling :-
     '$source_term'(From, Read, RLayout, Term, TLayout, Stream, [], Options),
     (   Term == end_of_file
     ->  !, fail
-    ;   true
+    ;   Term \== begin_of_file
     ).
 
 '$source_term'(Input, _,_,_,_,_,_,_) :-
@@ -1541,6 +1546,15 @@ compiling :-
 %   @see '$source_term'/8 for details.
 
 '$term_in_file'(In, Read, RLayout, Term, TLayout, Stream, Parents, Options) :-
+    Parents \= [_,_|_],
+    (   '$load_input'(_, Input)
+    ->  stream_property(Input, file_name(File))
+    ),
+    '$set_source_location'(File, 0),
+    '$expanded_term'(In,
+                     begin_of_file, 0-0, Read, RLayout, Term, TLayout,
+                     Stream, Parents, Options).
+'$term_in_file'(In, Read, RLayout, Term, TLayout, Stream, Parents, Options) :-
     '$skip_script_line'(In, Options),
     '$read_clause_options'(Options, ReadOptions),
     repeat,
@@ -1578,6 +1592,7 @@ compiling :-
 
 '$expanded_term'(In, Raw, RawLayout, Read, RLayout, Term, TLayout,
                  Stream, Parents, Options) :-
+    E = error(_,_),
     catch('$expand_term'(Raw, RawLayout, Expanded, ExpandedLayout), E,
           '$print_message_fail'(E)),
     (   Expanded \== []
@@ -1878,6 +1893,7 @@ load_files(Module:Files, Options) :-
 
 '$load_file_list'([], _, _).
 '$load_file_list'([File|Rest], Module, Options) :-
+    E = error(_,_),
     catch('$load_one_file'(File, Module, Options), E,
           '$print_message'(error, E)),
     '$load_file_list'(Rest, Module, Options).
@@ -1983,8 +1999,9 @@ load_files(Module:Files, Options) :-
         time_file(QlfFile, QlfTime),
         (   PlTime > QlfTime
         ->  Why = old                   % PlFile is newer
-        ;   catch('$qlf_sources'(QlfFile, _Files), Error, true),
-            nonvar(Error)               % QlfFile is incompatible
+        ;   Error = error(Formal,_),
+            catch('$qlf_sources'(QlfFile, _Files), Error, true),
+            nonvar(Formal)              % QlfFile is incompatible
         ->  Why = Error
         ;   fail                        % QlfFile is up-to-date and ok
         )
@@ -2169,7 +2186,7 @@ load_files(Module:Files, Options) :-
 
 '$mt_do_load'(queue(Queue), File, FullFile, Module, Options) :-
     !,
-    catch(thread_get_message(Queue, _), _, true),
+    catch(thread_get_message(Queue, _), error(_,_), true),
     '$already_loaded'(File, FullFile, Module, Options).
 '$mt_do_load'(already_loaded, File, FullFile, Module, Options) :-
     !,
@@ -2237,12 +2254,8 @@ load_files(Module:Files, Options) :-
     '$source_file_property'(Absolute, number_of_clauses, OldClauses),
     statistics(cputime, OldTime),
 
-    '$save_file_scoped_flags'(ScopedFlags),
-    '$set_sandboxed_load'(Options, OldSandBoxed),
-    '$set_verbose_load'(Options, OldVerbose),
-    '$set_optimise_load'(Options),
-    '$update_autoload_level'(Options, OldAutoLevel),
-    set_prolog_flag(xref, false),
+    '$setup_load'(ScopedFlags, OldSandBoxed, OldVerbose, OldAutoLevel, OldXRef,
+                  Options),
 
     '$compilation_level'(Level),
     '$load_msg_level'(load_file, Level, StartMsgLevel, DoneMsgLevel),
@@ -2266,6 +2279,7 @@ load_files(Module:Files, Options) :-
     ;   Input == source,
         file_name_extension(_, Ext, Absolute),
         (   user:prolog_file_type(Ext, qlf),
+            E = error(_,_),
             catch('$qload_file'(Absolute, Module, Action, LM, Options),
                   E,
                   print_message(warning, E))
@@ -2291,10 +2305,25 @@ load_files(Module:Files, Options) :-
                                     LM,
                                     TimeUsed,
                                     ClausesCreated))),
+
+    '$restore_load'(ScopedFlags, OldSandBoxed, OldVerbose, OldAutoLevel, OldXRef).
+
+'$setup_load'(ScopedFlags, OldSandBoxed, OldVerbose, OldAutoLevel, OldXRef,
+              Options) :-
+    '$save_file_scoped_flags'(ScopedFlags),
+    '$set_sandboxed_load'(Options, OldSandBoxed),
+    '$set_verbose_load'(Options, OldVerbose),
+    '$set_optimise_load'(Options),
+    '$update_autoload_level'(Options, OldAutoLevel),
+    '$set_no_xref'(OldXRef).
+
+'$restore_load'(ScopedFlags, OldSandBoxed, OldVerbose, OldAutoLevel, OldXRef) :-
     '$set_autoload_level'(OldAutoLevel),
+    set_prolog_flag(xref, OldXRef),
     set_prolog_flag(verbose_load, OldVerbose),
     set_prolog_flag(sandboxed_load, OldSandBoxed),
     '$restore_file_scoped_flags'(ScopedFlags).
+
 
 %!  '$save_file_scoped_flags'(-State) is det.
 %!  '$restore_file_scoped_flags'(-State) is det.
@@ -2394,6 +2423,13 @@ load_files(Module:Files, Options) :-
     ->  set_prolog_flag(optimise, Optimise)
     ;   true
     ).
+
+'$set_no_xref'(OldXRef) :-
+    (   current_prolog_flag(xref, OldXRef)
+    ->  true
+    ;   OldXRef = false
+    ),
+    set_prolog_flag(xref, false).
 
 
 %!  '$update_autoload_level'(+Options, -OldLevel)
@@ -2710,6 +2746,7 @@ load_files(Module:Files, Options) :-
     !,
     '$compile_term'(Term, Layout, Id, File:Line).
 '$compile_term'(Clause, Layout, Id, SrcLoc) :-
+    E = error(_,_),
     catch('$store_clause'(Clause, Layout, Id, SrcLoc), E,
           '$print_message'(error, E)).
 
@@ -3014,7 +3051,8 @@ load_files(Module:Files, Options) :-
     ;   true
     ),
     (   source_location(File, Line)
-    ->  catch('$store_admin_clause'((NewHead :- Source:Head),
+    ->  E = error(_,_),
+        catch('$store_admin_clause'((NewHead :- Source:Head),
                                     _Layout, File, File:Line),
               E, '$print_message'(error, E))
     ;   assertz((NewHead :- !, Source:Head)) % ! avoids problems with
@@ -3026,6 +3064,7 @@ load_files(Module:Files, Options) :-
     '$import_ops'(Context, Source, op(P,A,N)),
     '$import_all2'(Rest, Context, Source, Imported, ImpOps, Strength).
 '$import_all2'([Pred|Rest], Context, Source, [Pred|Imported], ImpOps, Strength) :-
+    Error = error(_,_),
     catch(Context:'$import'(Source:Pred, Strength), Error,
           print_message(error, Error)),
     '$ifcompiling'('$import_wic'(Source, Pred, Strength)),
@@ -3092,6 +3131,7 @@ load_files(Module:Files, Options) :-
 '$do_export_list'([], _, []) :- !.
 '$do_export_list'([H|T], Module, Ops) :-
     !,
+    E = error(_,_),
     catch('$export1'(H, Module, Ops, Ops1),
           E, ('$print_message'(error, E), Ops = Ops1)),
     '$do_export_list'(T, Module, Ops1).
@@ -3103,10 +3143,16 @@ load_files(Module:Files, Options) :-
 '$export1'(Op, _, [Op|T], T) :-
     Op = op(_,_,_),
     !.
-'$export1'(PI, Module, Ops, Ops) :-
-    export(Module:PI).
+'$export1'(PI0, Module, Ops, Ops) :-
+    strip_module(Module:PI0, M, PI),
+    (   PI = (_//_)
+    ->  non_terminal(M:PI)
+    ;   true
+    ),
+    export(M:PI).
 
 '$export_ops'([op(Pri, Assoc, Name)|T], Module, File) :-
+    E = error(_,_),
     catch(( '$execute_directive'(op(Pri, Assoc, Module:Name), File),
             '$export_op'(Pri, Assoc, Name, Module, File)
           ),
@@ -3160,7 +3206,8 @@ load_files(Module:Files, Options) :-
     !,
     (   '$pattr_directive'(Goal, Module)
     ->  true
-    ;   catch(Module:Goal, Term, '$exception_in_directive'(Term))
+    ;   Term = error(_,_),
+        catch(Module:Goal, Term, '$exception_in_directive'(Term))
     ->  true
     ;   '$print_message'(warning, goal_failed(directive, Module:Goal)),
         fail
@@ -3182,9 +3229,10 @@ load_files(Module:Files, Options) :-
     current_prolog_flag(sandboxed_load, false),
     !.
 '$valid_directive'(Goal) :-
+    Error = error(Formal, _),
     catch(prolog:sandbox_allowed_directive(Goal), Error, true),
     !,
-    (   var(Error)
+    (   var(Formal)
     ->  true
     ;   print_message(error, Error),
         fail
@@ -3329,9 +3377,10 @@ load_files(Module:Files, Options) :-
     \+ '$cross_module_clause'(Clause),
     !.
 '$valid_clause'(Clause) :-
+    Error = error(Formal, _),
     catch(prolog:sandbox_allowed_clause(Clause), Error, true),
     !,
-    (   var(Error)
+    (   var(Formal)
     ->  true
     ;   print_message(error, Error),
         fail
@@ -3483,85 +3532,6 @@ compile_aux_clauses(Clauses) :-
 
 '$expand_goal'(In, In).
 '$expand_term'(In, Layout, In, Layout).
-
-
-                /********************************
-                *     SAVED STATE GENERATION    *
-                *********************************/
-
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-This entry point is called from pl-main.c  if the -c option (compile) is
-given. It compiles all files and finally calls qsave_program to create a
-saved state.
-- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
-
-:- public '$compile_wic'/0.
-
-'$compile_wic' :-
-    use_module(user:library(qsave), [qsave_program/2]),
-    current_prolog_flag(os_argv, Argv),
-    '$qsave_options'(Argv, Files, Options),
-    '$cmd_option_val'(compileout, Out),
-    user:consult(Files),
-    user:qsave_program(Out, Options).
-
-'$qsave_options'([], [], []).
-'$qsave_options'([--|_], [], []) :-
-    !.
-'$qsave_options'(['-c'|T0], Files, Options) :-
-    !,
-    '$argv_files'(T0, T1, Files, FilesT),
-    '$qsave_options'(T1, FilesT, Options).
-'$qsave_options'([O|T0], Files, [Option|T]) :-
-    string_concat("--", Opt, O),
-    split_string(Opt, "=", "", [NameS|Rest]),
-    atom_string(Name, NameS),
-    '$qsave_option'(Name, OptName, Rest, Value),
-    !,
-    Option =.. [OptName, Value],
-    '$qsave_options'(T0, Files, T).
-'$qsave_options'([_|T0], Files, T) :-
-    '$qsave_options'(T0, Files, T).
-
-'$argv_files'([], [], Files, Files).
-'$argv_files'([H|T], [H|T], Files, Files) :-
-    sub_atom(H, 0, _, _, -),
-    !.
-'$argv_files'([H|T0], T, [H|Files0], Files) :-
-    '$argv_files'(T0, T, Files0, Files).
-
-%!  '$qsave_option'(+Name, +ValueStrings, -Value) is semidet.
-
-'$qsave_option'(Name, Name, [], true) :-
-    qsave:save_option(Name, boolean, _),
-    !.
-'$qsave_option'(NoName, Name, [], false) :-
-    atom_concat('no-', Name, NoName),
-    qsave:save_option(Name, boolean, _),
-    !.
-'$qsave_option'(Name, Name, ValueStrings, Value) :-
-    qsave:save_option(Name, Type, _),
-    !,
-    atomics_to_string(ValueStrings, "=", ValueString),
-    '$convert_option_value'(Type, ValueString, Value).
-'$qsave_option'(Name, Name, _Chars, _Value) :-
-    '$existence_error'(save_option, Name).
-
-'$convert_option_value'(integer, String, Value) :-
-    (   number_string(Value, String)
-    ->  true
-    ;   '$domain_error'(integer, String)
-    ).
-'$convert_option_value'(callable, String, Value) :-
-    term_string(Value, String).
-'$convert_option_value'(atom, String, Value) :-
-    atom_string(Value, String).
-'$convert_option_value'(boolean, String, Value) :-
-    atom_string(Value, String).
-'$convert_option_value'(oneof(_), String, Value) :-
-    atom_string(Value, String).
-'$convert_option_value'(ground, String, Value) :-
-    atom_string(Value, String).
 
 
                  /*******************************

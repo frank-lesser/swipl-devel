@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2012-2018, VU University Amsterdam
+    Copyright (c)  2012-2019, VU University Amsterdam
                               CWI, Amsterdam
     All rights reserved.
 
@@ -61,7 +61,7 @@
 :- use_module(library(http/http_open)).
 :- use_module(library(http/json)).
 :- use_module(library(http/http_client), []).   % plugin for POST support
-
+:- use_module(library(prolog_config)).
 
 /** <module> A package manager for Prolog
 
@@ -1253,6 +1253,9 @@ def_environment('LDSOFLAGS', Value) :-
     ->  current_prolog_flag(home, Home),
         atomic_list_concat(['-L"', Home, '/bin"'], SystemLib),
         System = [SystemLib]
+    ;   apple_bundle_libdir(LibDir)
+    ->  atomic_list_concat(['-L"', LibDir, '"'], SystemLib),
+        System = [SystemLib]
     ;   current_prolog_flag(c_libplso, '')
     ->  System = []                 % ELF systems do not need this
     ;   prolog_library_dir(SystemLibDir),
@@ -1439,9 +1442,23 @@ pack_remove(Pack) :-
     ).
 
 pack_remove_forced(Pack) :-
-    '$pack_detach'(Pack, BaseDir),
+    catch('$pack_detach'(Pack, BaseDir),
+          error(existence_error(pack, Pack), _),
+          fail),
+    !,
     print_message(informational, pack(remove(BaseDir))),
     delete_directory_and_contents(BaseDir).
+pack_remove_forced(Pack) :-
+    directory_file_path(Pack, 'pack.pl', PackFile),
+    absolute_file_name(pack(PackFile), PackPath,
+                       [ access(read),
+                         file_errors(fail)
+                       ]),
+    !,
+    file_directory_name(PackPath, BaseDir),
+    delete_directory_and_contents(BaseDir).
+pack_remove_forced(Pack) :-
+    print_message(informational, error(existence_error(pack, Pack),_)).
 
 confirm_remove(Pack, Deps, Delete) :-
     print_message(warning, pack(depends(Pack, Deps))),

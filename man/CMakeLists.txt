@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 2.8.12)
+cmake_minimum_required(VERSION 3.5)
 project(swipl-doc-core)
 
 include(Documentation)
@@ -8,7 +8,7 @@ set(DOC SWI-Prolog-${SWIPL_VERSION_STRING})
 # Libraries documented in .doc files
 set(DOC_LIB assoc.tex broadcast.tex clpb.tex clpfd.tex clpqr.tex gensym.tex
     library.tex libsummary.tex nbset.tex pio.tex predicateoptions.tex
-    prologxref.tex readutil.tex record.tex registry.tex simplex.tex
+    prologxref.tex record.tex registry.tex simplex.tex
     ugraphs.tex wwwbrowser.tex)
 prepend(DOC_LIB lib/ ${DOC_LIB})
 
@@ -31,7 +31,7 @@ add_custom_command(
 	    -c ${CMAKE_CURRENT_SOURCE_DIR}/pldoc2tex.pl
             -- --nopce
     DEPENDS pldoc2tex.pl swipl prolog_products
-            pldoc clib sgml http)
+            pldoc clib sgml http nlp)
 
 add_custom_target(
     pldoc2tex_state
@@ -88,7 +88,7 @@ function(pldoc tex input)
     set(options
 	--source=${CMAKE_CURRENT_SOURCE_DIR}
 	--summaries
-        --outdir=lib)
+        --out=${tex})
     set(depends ${PLDOC2TEX_DEPENDS})
     set(byproducts)
 
@@ -133,14 +133,19 @@ function(libsdoc)
 endfunction()
 
 # Specify how to generate tex files from PlDoc
-# Note: all files must be in
+# NOTE: all files must be included from lib/library.doc and
+# NOTE: lib/libsummary.doc
+
 libsdoc(apply dicts error url pairs option optparse ordsets aggregate
         thread_pool charsio debug csv lists main check random varnumbers
-        quasi_quotations solution_sequences iostream persistency yall)
+        quasi_quotations solution_sequences iostream persistency yall
+        settings occurs ansi_term readutil)
 libdoc(shlib --subsection)
 libdoc(pure_input --subsection)
-libdoc(prolog_pack --section)
 libdoc(explain --subsection)
+pldoc(lib/prologpack.tex "library(prolog_pack)"
+      OPTIONS --section
+      DEPENDS archive)
 pldoc(lib/assoclib.tex lib/assoclib.md
       OPTIONS --lib=assoc --module=assoc
       DEPENDS lib/assoclib.md ../library/assoc.pl)
@@ -159,6 +164,8 @@ pldoc(lib/predopts.tex lib/predopts.txt
 pldoc(lib/help.tex "library(help)"
       OPTIONS --subsection
       DEPENDS nlp)
+pldoc(lib/dcgbasics.tex "library(dcg/basics)")
+pldoc(lib/dcghighorder.tex "library(dcg/high_order)")
 
 # Check that we do not have both a .doc file and extract from the
 # Prolog source
@@ -222,6 +229,7 @@ add_custom_command(
 endif()
 
 # Create the HTML manual
+prepend(cpfiles ${CMAKE_CURRENT_BINARY_DIR}/ ${cpfiles})
 add_custom_command(
     OUTPUT manual.html
     COMMAND rm -f Manual/*.html Manual/*.gif

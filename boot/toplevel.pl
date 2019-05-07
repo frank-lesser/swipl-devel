@@ -56,23 +56,23 @@
 
 :- multifile user:file_search_path/2.
 
-user:file_search_path(user_profile, app_preferences('.')).
-:- if(current_prolog_flag(windows, true)).
-user:file_search_path(app_preferences, app_data('.')).
 user:file_search_path(app_data, PrologAppData) :-
-    current_prolog_flag(windows, true),
-    catch(win_folder(appdata, AppData), _, fail),
-    atom_concat(AppData, '/SWI-Prolog', PrologAppData),
-    (   exists_directory(PrologAppData)
-    ->  true
-    ;   catch(make_directory(PrologAppData), _, fail)
+    (   current_prolog_flag(windows, true)
+    ->  catch(win_folder(appdata, AppData), _, fail),
+        atom_concat(AppData, '/SWI-Prolog', PrologAppData),
+        (   exists_directory(PrologAppData)
+        ->  true
+        ;   catch(make_directory(PrologAppData), _, fail)
+        )
+    ;   catch(expand_file_name('~/lib/swipl', [PrologAppData]), _, fail)
     ).
-:- else.
-user:file_search_path(app_data, UserLibDir) :-
-    catch(expand_file_name('~/lib/swipl', [UserLibDir]), _, fail).
-:- endif.
-user:file_search_path(app_preferences, UserHome) :-
-    catch(expand_file_name(~, [UserHome]), _, fail).
+user:file_search_path(app_preferences, Preferences) :-
+    (   current_prolog_flag(windows, true)
+    ->  Preferences = app_data('.')
+    ;   catch(expand_file_name(~, [UserHome]), _, fail)
+    ->  Preferences = UserHome
+    ).
+user:file_search_path(user_profile, app_preferences('.')).
 
 
                  /*******************************
@@ -456,11 +456,11 @@ load_associated_files(Files) :-
     ;   true
     ).
 
-:- if(current_predicate(system:win_registry_get_value/3)).
 hkey('HKEY_CURRENT_USER/Software/SWI/Prolog').
 hkey('HKEY_LOCAL_MACHINE/Software/SWI/Prolog').
 
 '$set_prolog_file_extension' :-
+    current_prolog_flag(windows, true),
     hkey(Key),
     catch(win_registry_get_value(Key, fileExtension, Ext0),
           _, fail),
@@ -473,7 +473,6 @@ hkey('HKEY_LOCAL_MACHINE/Software/SWI/Prolog').
     ->  true
     ;   asserta(user:prolog_file_type(Ext, prolog))
     ).
-:- endif.
 '$set_prolog_file_extension'.
 
 
@@ -500,7 +499,6 @@ initialise_prolog :-
     '$run_initialization',
     '$load_system_init_file',
     set_toplevel,
-    associated_files(Files),
     '$set_file_search_paths',
     init_debug_flags,
     start_pldoc,
@@ -510,6 +508,7 @@ initialise_prolog :-
     '$load_init_file'(File),
     catch(setup_colors, E, print_message(warning, E)),
     '$load_script_file',
+    associated_files(Files),
     load_associated_files(Files),
     '$cmd_option_val'(goals, Goals),
     (   Goals == [],
@@ -624,6 +623,7 @@ setup_colors :-
         stream_property(user_input, tty(true)),
         stream_property(user_error, tty(true)),
         stream_property(user_output, tty(true)),
+        \+ getenv('TERM', dumb),
         load_setup_file(user:library(ansi_term))
     ->  true
     ;   true
@@ -734,12 +734,20 @@ setup_interactive :-
 %   Toplevel called when invoked with -c option.
 
 '$compile' :-
+    (   catch('$compile_', E, (print_message(error, E), halt(1)))
+    ->  true
+    ;   print_message(error, error(goal_failed('$compile'), _)),
+        halt(1)
+    ).
+
+'$compile_' :-
     '$load_system_init_file',
     '$set_file_search_paths',
     init_debug_flags,
     '$run_initialization',
     attach_packs,
-    catch('$compile_wic', E, (print_message(error, E), halt(1))).
+    use_module(library(qsave)),
+    qsave:qsave_toplevel.
 
 %!  '$config'
 %

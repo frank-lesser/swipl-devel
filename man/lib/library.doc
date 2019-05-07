@@ -27,6 +27,7 @@ documented at all.
 \end{quote}
 
 \input{aggregate}
+\input{ansiterm}
 \input{apply}
 \input{assoc}
 \input{broadcast}
@@ -36,6 +37,8 @@ documented at all.
 \input{clpfd}
 \input{clpqr}
 \input{csv}
+\input{dcgbasics}
+\input{dcghighorder}
 \input{debug}
 \input{dicts}
 \input{error}
@@ -45,6 +48,7 @@ documented at all.
 \input{main}
 \input{nbset}
 \input{wwwbrowser}
+\input{occurs}
 \input{option}
 \input{optparse}
 \input{ordsets}
@@ -59,6 +63,7 @@ documented at all.
 \input{readutil}
 \input{record}
 \input{registry}
+\input{settings}
 \input{simplex}
 \input{solutionsequences}
 \input{threadpool}

@@ -1,8 +1,9 @@
-cmake_minimum_required(VERSION 2.8.12)
+cmake_minimum_required(VERSION 3.5)
 project(SWI-Prolog)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 set(CMAKE_POLICY_DEFAULT_CMP0075 NEW)
+set(CMAKE_POLICY_DEFAULT_CMP0074 NEW)
 
 option(MULTI_THREADED
        "Enable multiple Prolog threads"
@@ -22,6 +23,9 @@ option(SWIPL_VERSIONED_DIR
 option(SWIPL_INSTALL_IN_LIB
        "Install library in ${CMAKE_INSTALL_PREFIX}/lib"
        OFF)
+option(SWIPL_M32
+       "Build 32-bit version on 64-bit Linux using multilib and gcc -m32"
+       OFF)
 option(INSTALL_DOCUMENTATION
        "Install the HTML documentation files"
        ON)
@@ -37,6 +41,16 @@ option(BUILD_TESTING
 option(BUILD_SWIPL_LD
        "Create the swipl-ld utility"
        ON)
+option(INSTALL_TESTS
+       "Install script and files needed to run tests of the final installation"
+       OFF)
+
+set(JNIDIR ""
+    CACHE STRING "Directory for linking Java JNI components")
+
+if(NOT SWIPL_SHARED_LIB)
+  set(CMAKE_ENABLE_EXPORTS ON)
+endif()
 
 include(Utils)
 include(BuildType)
@@ -109,11 +123,18 @@ endif(WIN32)
 set(SWIPL_INSTALL_LIBRARY  ${SWIPL_INSTALL_PREFIX}/library)
 set(SWIPL_INSTALL_BOOT     ${SWIPL_INSTALL_PREFIX}/boot)
 set(SWIPL_INSTALL_INCLUDE  ${SWIPL_INSTALL_PREFIX}/include)
+if(INSTALL_TESTS)
+   set(INSTALL_TESTS_DIR   ${SWIPL_INSTALL_PREFIX}/test)
+endif()
 
 if(MSVC)
   add_compile_options(/W3)
 else()
   add_compile_options(-Wall)
+endif()
+
+if(SWIPL_M32)
+  include(cross/linux_i386)
 endif()
 
 if(BUILD_TESTING)
@@ -166,6 +187,18 @@ if(INSTALL_DOCUMENTATION)
   install(FILES packages/index.html
 	  DESTINATION ${SWIPL_INSTALL_PREFIX}/doc/packages)
 endif(INSTALL_DOCUMENTATION)
+
+# Install a prolog script to run tests on target device
+# in which ctest is not available
+if(INSTALL_TESTS)
+  set(INSTALL_TESTS_DIR ${SWIPL_INSTALL_PREFIX}/test)
+  set(PKGS_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/packages)
+  set(INSTALL_TESTS_DB ${CMAKE_BINARY_DIR}/cmake_pkg_tests.db)
+  #Move test db to installation
+  install(FILES       ${INSTALL_TESTS_DB}
+	  DESTINATION ${INSTALL_TESTS_DIR}/)
+  file(REMOVE ${INSTALL_TESTS_DB})
+endif(INSTALL_TESTS)
 
 # Add the packages
 foreach(package ${SWIPL_PACKAGE_LIST})

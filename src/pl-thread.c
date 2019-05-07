@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1999-2018, University of Amsterdam,
+    Copyright (c)  1999-2019, University of Amsterdam,
                               VU University Amsterdam
 			      CWI, Amsterdam
     All rights reserved.
@@ -117,6 +117,17 @@ _syscall0(pid_t,gettid)
 
 #ifdef HAVE_SYS_SYSCALL_H
 #include <sys/syscall.h>
+#endif
+
+#ifdef HAVE_SYS_CPUSET_H
+#include <sys/param.h>         /* pulls sys/cdefs.h and sys/types.h for sys/cpuset.h */
+#include <sys/cpuset.h>        /* CPU_ZERO(), CPU_SET, cpuset_t */
+#endif
+#ifdef HAVE_PTHREAD_NP_H
+#include <pthread_np.h>        /* pthread_*_np */
+#endif
+#ifdef HAVE_CPUSET_T
+typedef cpuset_t cpu_set_t;
 #endif
 
 #ifdef HAVE_SEMA_INIT			/* Solaris */
@@ -597,11 +608,20 @@ freePrologThread(PL_local_data_t *ld, int after_fork)
     acknowledge = ld->exit_requested;
     PL_UNLOCK(L_THREAD);
 
+    ld->critical++;   /* startCritical  */
     info->in_exit_hooks = TRUE;
-    rc = callEventHook(PL_EV_THREADFINISHED, info);
-    (void)rc;
+    if ( !(rc = callEventHook(PL_EV_THREADFINISHED, info)) )
+    { GET_LD
+
+      if ( exception_term )
+      { Sdprintf("Event hook \"thread_finished\" left an exception\n");
+	PL_write_term(Serror, exception_term, 1200, PL_WRT_QUOTED|PL_WRT_NEWLINE);
+	PL_clear_exception();
+      }
+    }
     run_thread_exit_hooks(ld);
     info->in_exit_hooks = FALSE;
+    ld->critical--;   /* endCritical */
   } else
   { acknowledge = FALSE;
     info->detached = TRUE;		/* cleanup */
@@ -1625,17 +1645,17 @@ set_os_thread_name_from_charp(const char *s)
 #ifdef HAVE_PTHREAD_SETNAME_NP
   char name[16];
 
-  if ( strlen(s) > 15 )
-  { strncpy(name, s, 15);
-    name[15] = EOS;
-  } else
-  { strcpy(name, s);
-  }
-#ifdef HAVE_PTHREAD_SETNAME_NP_WITHOUT_TID
-  if ( pthread_setname_np(name) == 0 )
+  strncpy(name, s, 15);
+  name[15] = EOS;
+
+#ifdef HAVE_PTHREAD_SETNAME_NP_WITH_TID
+  if ( pthread_setname_np(pthread_self(), name) == 0 )
+    return TRUE;
+#elif HAVE_PTHREAD_SETNAME_NP_WITH_TID_AND_ARG
+  if ( pthread_setname_np(pthread_self(), "%s", (void *)name) == 0 )
     return TRUE;
 #else
-  if ( pthread_setname_np(pthread_self(), name) == 0 )
+  if ( pthread_setname_np(name) == 0 )
     return TRUE;
 #endif
 #endif
@@ -1745,21 +1765,19 @@ start_thread(void *closure)
 	}
 
 	if ( print )
-	{ int rc;
-
-	  rc = printMessage(ATOM_warning,
-			    PL_FUNCTOR_CHARS, "abnormal_thread_completion", 2,
-			      PL_TERM, goal,
-			      PL_FUNCTOR, FUNCTOR_exception1,
-			      PL_TERM, ex);
-	  (void)rc;			/* it is dead anyway */
+	{ if ( !printMessage(ATOM_warning,
+			     PL_FUNCTOR_CHARS, "abnormal_thread_completion", 2,
+			       PL_TERM, goal,
+			       PL_FUNCTOR, FUNCTOR_exception1,
+			       PL_TERM, ex) )
+	    PL_clear_exception();	/* The thread is dead anyway */
 	}
       } else
       { if ( !printMessage(ATOM_warning,
 			   PL_FUNCTOR_CHARS, "abnormal_thread_completion", 2,
 			     PL_TERM, goal,
 			     PL_ATOM, ATOM_fail) )
-	  PL_clear_exception();		/* it is dead anyway */
+	  PL_clear_exception();		/* The thread is dead anyway */
       }
     }
 
@@ -2895,13 +2913,11 @@ run_exit_hooks(at_exit_goal *eg, int free)
 	if ( rc )
 	{ DEBUG(MSG_THREAD,
 		{ Sdprintf("Calling exit goal: ");
-		  PL_write_term(Serror, goal, 1200, PL_WRT_QUOTED);
-		  Sdprintf("\n");
+		  PL_write_term(Serror, goal, 1200, PL_WRT_QUOTED|PL_WRT_NEWLINE);
 		});
 
 	  callProlog(eg->goal.prolog.module, goal, PL_Q_NODEBUG, NULL);
 	}
-	PL_rewind_foreign_frame(fid);
 	break;
       }
       case EXIT_C:
@@ -2911,8 +2927,16 @@ run_exit_hooks(at_exit_goal *eg, int free)
 	assert(0);
     }
 
+    if ( exception_term )
+    { Sdprintf("Thread exit hook left an exception:\n");
+      PL_write_term(Serror, exception_term, 1200, PL_WRT_QUOTED|PL_WRT_NEWLINE);
+      PL_clear_exception();
+    }
+
     if ( free )
       freeHeap(eg, sizeof(*eg));
+
+    PL_rewind_foreign_frame(fid);
   }
 
   PL_discard_foreign_frame(fid);
@@ -4346,7 +4370,6 @@ wait_queue_message(term_t qterm, message_queue *q, thread_message *msg,
 
   for(;;)
   { rc = queue_message(q, msg, deadline PASS_LD);
-    release_message_queue(q);
 
     switch(rc)
     { case MSG_WAIT_INTR:
@@ -4390,7 +4413,10 @@ thread_send_message__LD(term_t queue, term_t msgterm,
     return PL_no_memory();
   }
 
-  if ( (rc=wait_queue_message(queue, q, msg, deadline PASS_LD)) == FALSE )
+  rc = wait_queue_message(queue, q, msg, deadline PASS_LD);
+  release_message_queue(q);
+
+  if ( rc == FALSE )
     free_thread_message(msg);
 
   return rc;
@@ -5319,7 +5345,7 @@ PL_thread_attach_engine(PL_thread_attr_t *attr)
                      (attr->flags & PL_THREAD_NOT_DETACHED) == 0;
   info->open_count = 1;
 
-  copy_local_data(ldnew, ldmain, attr->max_queue_size);
+  copy_local_data(ldnew, ldmain, attr ? attr->max_queue_size : 0);
 
   if ( !initialise_thread(info) )
   { free_thread_info(info);
@@ -6262,6 +6288,19 @@ registerLocalDefinition(Definition def)
 }
 
 
+static void
+unregisterLocalDefinition(Definition def, PL_local_data_t *ld)
+{ DefinitionChain cell;
+
+  for(cell = ld->thread.local_definitions; cell; cell = cell->next)
+  { if ( cell->definition == def )
+    { cell->definition = NULL;
+      return;
+    }
+  }
+}
+
+
 LocalDefinitions
 new_ldef_vector(void)
 { LocalDefinitions f = allocHeapOrHalt(sizeof(*f));
@@ -6272,6 +6311,60 @@ new_ldef_vector(void)
   f->blocks[2] = f->preallocated - 1;
 
   return f;
+}
+
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Called  from  destroyDefinition()   for    a   thread-local   predicate.
+destroyDefinition() is called  for  destroying   temporary  modules.  If
+thread-local predicates are defined in the   temporary module these must
+be destroyed and the registration with  module   must  be removed or the
+thread cleanup will access the destroyed predicate.
+
+Now, the thread having a localization for  this predicate is most likely
+the calling thread, but in theory other threads can be involved and thus
+we need to scan the entire localization array.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+void
+destroyLocalDefinitions(Definition def)
+{ GET_LD
+  LocalDefinitions ldefs = def->impl.local;
+  int b;
+
+  for(b=0; b<MAX_BLOCKS; b++)
+  { Definition *d0 = ldefs->blocks[b];
+
+    if ( d0 )
+    { size_t bs = (size_t)1<<b;
+      size_t tid = bs;
+      size_t end = tid+bs;
+
+      for(tid=bs; tid<end; tid++)
+      { if ( d0[tid] )
+	{ PL_thread_info_t *info = GD->thread.threads[tid];
+	  PL_local_data_t *ld;
+
+	  if ( LD )					/* See (*) */
+	    ld = acquire_ldata(info);
+	  else
+	    ld = info->thread_data;
+
+	  DEBUG(MSG_THREAD_LOCAL,
+		if ( ld != LD )
+		  Sdprintf("Destroying thread local predicate %s "
+			   "with active local definitions\n",
+			   predicateName(def)));
+
+	  unregisterLocalDefinition(def, ld);
+	  destroyLocalDefinition(def, tid);
+
+	  if ( LD )
+	    release_ldata(ld);
+	}
+      }
+    }
+  }
 }
 
 
@@ -6323,13 +6416,15 @@ cleanupLocalDefinitions(PL_local_data_t *ld)
   { Definition def = ch->definition;
     next = ch->next;
 
-    DEBUG(MSG_CLEANUP,
-	  Sdprintf("Clean local def in thread %d for %s\n",
-		   id,
-		   predicateName(def)));
+    if ( def )
+    { DEBUG(MSG_CLEANUP,
+	    Sdprintf("Clean local def in thread %d for %s\n",
+		     id,
+		     predicateName(def)));
 
-    assert(true(def, P_THREAD_LOCAL));
-    destroyLocalDefinition(def, id);
+      assert(true(def, P_THREAD_LOCAL));
+      destroyLocalDefinition(def, id);
+    }
     freeHeap(ch, sizeof(*ch));
   }
 }

@@ -278,18 +278,27 @@ endfunction()
 
 # test_lib(name
 #	   [PACKAGES ...]
-#	   [PARENT_LIB])
+#	   [PARENT_LIB]
+#	   [TEST_FILES ...]
+#          [TEST_DIRS ...])
 #
 # Run test_${name} in test_${name}.pl
+#
+# TEST_FILES_REGEX is only needed if the test files are *not* under a
+# directory named test[s] or Test[s]. It is one regular expression
+# which will be matched against the full path of the package source
+# and build directories.
 
 if(NOT SWIPL_PATH_SEP)
   set(SWIPL_PATH_SEP ":")
 endif()
 
 function(test_lib name)
-  cmake_parse_arguments(my "PARENT_LIB" "NAME" "PACKAGES" ${ARGN})
+  cmake_parse_arguments(my "PARENT_LIB" "NAME"
+			"TEST_FILES;TEST_DIRS;PACKAGES" ${ARGN})
   set(test_goal "test_${name}")
-  set(test_source "${CMAKE_CURRENT_SOURCE_DIR}/test_${name}.pl")
+  set(test_source_basename "test_${name}.pl")
+  set(test_source "${CMAKE_CURRENT_SOURCE_DIR}/${test_source_basename}")
 
   if(my_NAME)
     set(test_name ${my_NAME})
@@ -310,6 +319,31 @@ function(test_lib name)
 			 -f none -s ${test_source}
 			 -g "${test_goal}"
 			 -t halt)
+  # Write db with lists of tests to be used with -DINSTALL_TESTS
+  if(INSTALL_TESTS)
+    file(RELATIVE_PATH rel_test_dir
+	 ${CMAKE_CURRENT_SOURCE_DIR}/../.. ${CMAKE_CURRENT_SOURCE_DIR})
+    file(APPEND ${INSTALL_TESTS_DB}
+	 "cmake_test('${SWIPL_PKG}', '${test_name}',
+	   test_goal('${rel_test_dir}',
+		     '${test_source_basename}',
+		     '${test_goal}')).\n")
+
+    install(FILES ${test_source} DESTINATION
+	    ${INSTALL_TESTS_DIR}/packages/${SWIPL_PKG})
+
+    # Install files needed for testing at run time
+    if(my_TEST_FILES)
+      install(FILES ${my_TEST_FILES} DESTINATION
+	      ${INSTALL_TESTS_DIR}/packages/${SWIPL_PKG})
+    endif()
+
+    if(my_TEST_DIRS)
+      install(DIRECTORY ${my_TEST_DIRS} DESTINATION
+	      ${INSTALL_TESTS_DIR}/packages/${SWIPL_PKG})
+    endif()
+
+  endif(INSTALL_TESTS)
 endfunction(test_lib)
 
 # test_libs(name ...
@@ -321,19 +355,29 @@ function(test_libs)
   set(tests)
   set(packages)
   set(extra)
+  set(test_dirs)
+  set(test_files)
 
   foreach(arg ${ARGN})
     if(arg STREQUAL "PACKAGES")
       set(mode "packages")
     elseif(arg STREQUAL "PARENT_LIB")
       set(extra PARENT_LIB)
+    elseif(arg STREQUAL "TEST_DIRS")
+      set(mode "test_dirs")
+    elseif(arg STREQUAL "TEST_FILES")
+      set(mode "test_files")
     else()
       set(${mode} ${${mode}} ${arg})
     endif()
   endforeach()
 
   foreach(test ${tests})
-    test_lib(${test} PACKAGES ${packages} ${extra})
+    test_lib(${test}
+             PACKAGES ${packages}
+	     TEST_DIRS ${test_dirs}
+	     TEST_FILES ${test_files}
+             ${extra})
   endforeach()
 endfunction(test_libs)
 

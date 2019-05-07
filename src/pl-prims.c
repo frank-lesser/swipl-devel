@@ -3047,6 +3047,34 @@ term_variables(term_t t, term_t vars, term_t tail, int flags ARG_LD)
     return PL_unify_nil(list);
 }
 
+/** term_var_skeleton(+Term, -Vars)
+ * Get a v/n term for the variables in Term
+ */
+
+int
+term_var_skeleton(term_t t, term_t vs ARG_LD)
+{ term_t v0;
+  size_t count;
+  functor_t vf;
+
+  for(;;)
+  { count = term_variables_to_termv(t, &v0, ~(size_t)0, 0 PASS_LD);
+    if ( count == TV_EXCEPTION )
+      return FALSE;
+    if ( count == TV_NOSPACE )
+    { PL_reset_term_refs(v0);
+      if ( !makeMoreStackSpace(LOCAL_OVERFLOW, ALLOW_SHIFT) )
+	return FALSE;			/* GC doesn't help */
+      continue;
+    }
+    if ( count == TV_NOMEM )
+      return PL_error(NULL, 0, NULL, ERR_NOMEM);
+    break;
+  }
+
+  vf = PL_new_functor(ATOM_v, count);
+  return PL_cons_functor_v(vs, vf, v0);
+}
 
 
 static
@@ -5140,7 +5168,7 @@ qp_statistics__LD(atom_t key, int64_t v[], PL_local_data_t *ld)
 
   if ( key == ATOM_runtime )		/* compat: exclude gc-time */
   { v[0] = (int64_t)((LD->statistics.user_cputime -
-		      gc_status.time -
+		      LD->gc.stats.totals.time -
 		      GD->atoms.gc_time) * 1000.0);
     v[1] = v[0] - LD->statistics.last_cputime;
     LD->statistics.last_cputime = (intptr_t)v[0];
@@ -5189,11 +5217,13 @@ qp_statistics__LD(atom_t key, int64_t v[], PL_local_data_t *ld)
     vn = 2;
   } else if ( key == ATOM_garbage_collection )
   { vn=0;
+    gc_stats *stats = &LD->gc.stats;
+    gc_stat  *last  = last_gc_stats(stats);
 
-    v[vn++] = gc_status.collections;
-    v[vn++] = gc_status.trail_gained + gc_status.global_gained;
-    v[vn++] = (int64_t)(gc_status.time * 1000.0);
-    v[vn++] = gc_status.trail_left + gc_status.global_left;
+    v[vn++] = stats->totals.collections;
+    v[vn++] = stats->totals.trail_gained + stats->totals.global_gained;
+    v[vn++] = (int64_t)(stats->totals.time * 1000.0);
+    v[vn++] = last->trail_after + last->global_after;
 
   } else if ( key == ATOM_stack_shifts )
   {
@@ -5288,11 +5318,12 @@ swi_statistics__LD(atom_t key, Number v, PL_local_data_t *ld)
     v->value.f = PL_local_data.statistics.start_time;
   } else if (key == ATOM_gctime)
   { v->type = V_FLOAT;
-    v->value.f = gc_status.time;
+    v->value.f = LD->gc.stats.totals.time;
   } else if (key == ATOM_collections)
-    v->value.i = gc_status.collections;
+    v->value.i = LD->gc.stats.totals.collections;
   else if (key == ATOM_collected)
-    v->value.i = gc_status.trail_gained + gc_status.global_gained;
+    v->value.i = LD->gc.stats.totals.trail_gained +
+                 LD->gc.stats.totals.global_gained;
 #ifdef HAVE_BOEHM_GC
   else if ( key == ATOM_heap_gc )
     v->value.i = GC_get_gc_no();

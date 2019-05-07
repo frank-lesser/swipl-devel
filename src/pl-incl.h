@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1985-2018, University of Amsterdam,
+    Copyright (c)  1985-2019, University of Amsterdam,
                               VU University Amsterdam
 			      CWI, Amsterdam
     All rights reserved.
@@ -48,7 +48,7 @@
 #define PLHOME       "c:/Program Files (x86)/swipl"
 #endif
 #define DEFSTARTUP   "swipl.ini"
-#else
+#else /*__WINDOWS__*/
 #include <config.h>
 #endif
 
@@ -244,7 +244,7 @@ gcc.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 #ifndef __unix__
-#if defined(_AIX) || defined(__APPLE__) || defined(__unix) || defined(__BEOS__) || defined(__NetBSD__)
+#if defined(_AIX) || defined(__APPLE__) || defined(__unix) || defined(__BEOS__) || defined(__NetBSD__) || defined(__HAIKU__)
 #define __unix__ 1
 #endif
 #endif
@@ -932,12 +932,14 @@ Macros for environment frames (local stack frames)
 #define FR_SKIPPED		(0x0002) /* We have skipped on this frame */
 #define FR_MARKED		(0x0004) /* GC */
 #define FR_MARKED_PRED		(0x0008) /* GC predicates/clauses */
-#define FR_WATCHED		(0x0010) /* GUI debugger */
+#define FR_DEBUG		(0x0010) /* GUI debugger */
 #define FR_CATCHED		(0x0020) /* Frame caught an exception */
 #define FR_INBOX		(0x0040) /* Inside box (for REDO in built-in) */
 #define FR_CONTEXT		(0x0080) /* fr->context is set */
-#define FR_CLEANUP		(0x0100) /* setup_call_cleanup/4: marked for cleanup */
+#define FR_CLEANUP		(0x0100) /* setup_call_cleanup/4 */
 #define FR_INRESET		(0x0200) /* Continuations: inside reset/3 */
+#define FR_WATCHED (FR_CLEANUP|FR_DEBUG)
+
 #define FR_MAGIC_MASK		(0xfffff000)
 #define FR_MAGIC_MASK2		(0xffff0000)
 #define FR_MAGIC		(0x549d5000)
@@ -1304,6 +1306,42 @@ typedef struct cgc_stats
   size_t	dirty_pred_clauses;	/* # clauses in dirty predicates */
   int64_t	erased_skipped;		/* # skipped clauses that are erased  */
 } cgc_stats;
+
+#define GC_STAT_WINDOW_SIZE 3
+#define GC_GLOBAL_OVERFLOW	0x000000000001
+#define GC_GLOBAL_REQUEST	0x000000000100
+#define GC_TRAIL_OVERFLOW	0x000000010000
+#define GC_TRAIL_REQUEST	0x000001000000
+#define GC_EXCEPTION		0x000100000000
+#define GC_USER			0x010000000000
+
+typedef uint64_t gc_reason_t;
+
+typedef struct gc_stat
+{ size_t	global_before;
+  size_t	global_after;
+  size_t	trail_before;
+  size_t	trail_after;
+  size_t	local;
+  double	gc_time;		/* time spent on last GC */
+  double	prolog_time;		/* Real work CPU before this GC */
+  gc_reason_t	reason;			/* why GC was run */
+} gc_stat;
+
+typedef struct gc_stats
+{ gc_stat	last[GC_STAT_WINDOW_SIZE];
+  gc_stat	aggr[GC_STAT_WINDOW_SIZE];
+  int		last_index;
+  int		aggr_index;
+  double	thread_cpu;		/* Last thread CPU time */
+  gc_reason_t	request;		/* Requesting stack */
+  struct
+  { int64_t	collections;
+    int64_t	global_gained;		/* global stack bytes collected */
+    int64_t	trail_gained;		/* trail stack bytes collected */
+    double	time;			/* time spent in collections */
+  } totals;
+} gc_stats;
 
 
 #define VM_DYNARGC    255	/* compute argcount dynamically */
@@ -1910,16 +1948,16 @@ typedef struct
 } sig_handler, *SigHandler;
 
 
-#define SIG_EXCEPTION	  (SIG_PROLOG_OFFSET+0)
 #ifdef O_ATOMGC
-#define SIG_ATOM_GC	  (SIG_PROLOG_OFFSET+1)
+#define SIG_ATOM_GC	  (SIG_PROLOG_OFFSET+0)
 #endif
-#define SIG_GC		  (SIG_PROLOG_OFFSET+2)
+#define SIG_GC		  (SIG_PROLOG_OFFSET+1)
 #ifdef O_PLMT
-#define SIG_THREAD_SIGNAL (SIG_PROLOG_OFFSET+3)
+#define SIG_THREAD_SIGNAL (SIG_PROLOG_OFFSET+2)
 #endif
-#define SIG_CLAUSE_GC	  (SIG_PROLOG_OFFSET+4)
-#define SIG_PLABORT	  (SIG_PROLOG_OFFSET+5)
+#define SIG_CLAUSE_GC	  (SIG_PROLOG_OFFSET+3)
+#define SIG_PLABORT	  (SIG_PROLOG_OFFSET+4)
+#define SIG_TUNE_GC	  (SIG_PROLOG_OFFSET+5)
 
 
 		 /*******************************
@@ -2163,7 +2201,7 @@ typedef struct redir_context
 		*       READ WARNINGS           *
 		*********************************/
 
-#define ReadingSource (source_line_no > 0 && \
+#define ReadingSource (source_line_no >= 0 && \
 		       source_file_name != NULL_ATOM)
 
 
@@ -2188,12 +2226,6 @@ typedef struct redir_context
 typedef struct
 { int		blocked;		/* GC is blocked now */
   bool		active;			/* Currently running? */
-  long		collections;		/* # garbage collections */
-  int64_t	global_gained;		/* global stack bytes collected */
-  int64_t	trail_gained;		/* trail stack bytes collected */
-  int64_t	global_left;		/* global stack bytes left after GC */
-  int64_t	trail_left;		/* trail stack bytes left after GC */
-  double	time;			/* time spent in collections */
 } pl_gc_status_t;
 
 
@@ -2234,6 +2266,7 @@ typedef struct
 #define PROCEDURE_exception_hook4	(GD->procedures.exception_hook4)
 #define PROCEDURE_dc_call_prolog	(GD->procedures.dc_call_prolog0)
 #define PROCEDURE_dinit_goal		(GD->procedures.dinit_goal3)
+#define PROCEDURE_tune_gc3		(GD->procedures.tune_gc3)
 
 extern const code_info codeTable[]; /* Instruction info (read-only) */
 
@@ -2336,7 +2369,7 @@ typedef struct debuginfo
 #define PLFLAG_AUTOLOAD		    0x00004000 /* do autoloading */
 #define PLFLAG_CHARCONVERSION	    0x00008000 /* do character-conversion */
 #define PLFLAG_LASTCALL		    0x00010000 /* Last call optimization enabled? */
-//				    0x00020000 /* not used */
+#define PLFLAG_PORTABLE_VMI	    0x00020000 /* Generate portable VMI code */
 #define PLFLAG_SIGNALS		    0x00040000 /* Handle signals */
 #define PLFLAG_DEBUGINFO	    0x00080000 /* generate debug info */
 #define PLFLAG_FILEERRORS	    0x00100000 /* Edinburgh file errors */
