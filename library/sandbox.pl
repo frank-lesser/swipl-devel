@@ -556,6 +556,7 @@ safe_primitive(copy_term(_,_)).
 safe_primitive(system:duplicate_term(_,_)).
 safe_primitive(system:copy_term_nat(_,_)).
 safe_primitive(numbervars(_,_,_)).
+safe_primitive(system:numbervars(_,_,_,_)).
 safe_primitive(subsumes_term(_,_)).
 safe_primitive(system:term_hash(_,_)).
 safe_primitive(system:term_hash(_,_,_,_)).
@@ -729,6 +730,12 @@ stack_name(local).
 stack_name(trail).
 
 safe_primitive('$tabling':abolish_all_tables).
+safe_primitive('$tabling':'$wrap_tabled'(Module:_Head)) :-
+    prolog_load_context(module, Module),
+    !.
+safe_primitive('$tabling':'$moded_wrap_tabled'(Module:_Head,_,_,_)) :-
+    prolog_load_context(module, Module),
+    !.
 
 
 % use_module/1.  We only allow for .pl files that are loaded from
