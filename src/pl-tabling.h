@@ -75,10 +75,12 @@ typedef struct tbl_component
 { int			magic;			/* COMPONENT_MAGIC */
   scc_status	        status;			/* SCC_* */
   scc_neg_status	neg_status;		/* SCC_NEG_* */
+  size_t		simplifications;        /* # simplifications */
   struct tbl_component *parent;
   component_set        *children;		/* Child components */
   worklist_set         *worklist;		/* Worklist of current query */
   worklist_set         *created_worklists;	/* Worklists created */
+  worklist_set	       *delay_worklists;	/* Worklists in need for delays */
   trie		       *leader;			/* Leading variant */
 } tbl_component;
 
@@ -100,13 +102,13 @@ typedef struct worklist
   cluster      *riac;			/* rightmost inner answer cluster */
   cluster      *free_clusters;		/* clusters to reuse */
   int		magic;			/* WORKLIST_MAGIC */
+  unsigned	completed : 1;		/* Really completed */
   unsigned	ground : 1;		/* Ground call (early completion) */
   unsigned	executing : 1;		/* $tbl_wkl_work/3 in progress */
   unsigned	in_global_wl : 1;	/* already in global worklist */
   unsigned	negative : 1;		/* this is a suspended negation */
   unsigned	neg_delayed : 1;	/* Negative node was delayed */
-  unsigned	neg_completed : 1;	/* Negative node is complete (false) */
-  unsigned	has_answers : 1;	/* Negative node has >= one answer */
+  unsigned	has_answers : 1;	/* At least one unconditional answer */
   unsigned	answer_completed : 1;	/* Is answer completed */
   size_t	undefined;		/* #undefined answers */
 
@@ -160,6 +162,7 @@ typedef struct delay_set
 
 typedef struct delay_info
 { trie_node      *variant;		/* Variant trie node */
+  unsigned	  has_share_records;	/* We have variable sharing records */
   buffer          delay_sets;		/* The disjunctive conditions */
   buffer	  delays;		/* Store for the delays */
 } delay_info;
@@ -171,5 +174,6 @@ typedef struct delay_info
 
 COMMON(void)	clearThreadTablingData(PL_local_data_t *ld);
 COMMON(term_t)	init_delay_list(void);
+COMMON(void)	destroy_delay_info(delay_info *di);
 
 #endif /*_PL_TABLING_H*/

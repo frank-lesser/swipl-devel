@@ -35,9 +35,11 @@
 */
 
 :- module('$tabling',
-          [ (table)/1,                  % +PI ...
+          [ (table)/1,                  % :PI ...
+            untable/1,                  % :PI ...
 
-            (tnot)/1,                     % :Goal
+            (tnot)/1,                   % :Goal
+            undefined/0,
 
             current_table/2,            % :Variant, ?Table
             abolish_all_tables/0,
@@ -52,6 +54,8 @@
           ]).
 
 :- meta_predicate
+    table(:),
+    untable(:),
     tnot(0),
     start_tabling(+, 0),
     start_tabling(+, 0, +, ?),
@@ -78,7 +82,13 @@ goal_expansion(tdebug(Topic, Fmt, Args), Expansion) :-
     ).
 goal_expansion(tdebug(Goal), Expansion) :-
     (   current_prolog_flag(prolog_debug, true)
-    ->  Expansion = (Goal->true;print_message(error, goal_failed(Goal)))
+    ->  Expansion = (   debugging(tabling(_))
+                    ->  (   Goal
+                        ->  true
+                        ;   print_message(error, goal_failed(Goal))
+                        )
+                    ;   true
+                    )
     ;   Expansion = true
     ).
 
@@ -105,11 +115,13 @@ user_goal(Goal, UGoal) :-
 
 :- endif.
 
-%!  table(+PredicateIndicators)
+%!  table(:PredicateIndicators)
 %
-%   Prepare the given PredicateIndicators for   tabling. Can only be
-%   used as a directive. The example   below  prepares the predicate
-%   edge/2 and the non-terminal statement//1 for tabled execution.
+%   Prepare the given PredicateIndicators for tabling. This predicate is
+%   normally used as a directive,  but   SWI-Prolog  also allows runtime
+%   conversion of non-tabled predicates to  tabled predicates by calling
+%   table/1. The example below prepares  the   predicate  edge/2 and the
+%   non-terminal statement//1 for tabled execution.
 %
 %     ==
 %     :- table edge/2, statement//1.
@@ -126,8 +138,85 @@ user_goal(Goal, UGoal) :-
 %   _Mode directed tabling_ is  discussed   in  the general introduction
 %   section about tabling.
 
-table(PIList) :-
-    throw(error(context_error(nodirective, table(PIList)), _)).
+table(M:PIList) :-
+    setup_call_cleanup(
+        '$set_source_module'(OldModule, M),
+        expand_term((:- table(PIList)), Clauses),
+        '$set_source_module'(OldModule)),
+    dyn_tabling_list(Clauses, M).
+
+dyn_tabling_list([], _).
+dyn_tabling_list([H|T], M) :-
+    dyn_tabling(H, M),
+    dyn_tabling_list(T, M).
+
+dyn_tabling((:- multifile(PI)), M) :-
+    !,
+    multifile(M:PI),
+    dynamic(M:PI).
+dyn_tabling(:- initialization(Wrap, now), M) :-
+    !,
+    M:Wrap.
+dyn_tabling('$tabled'(Head), M) :-
+    (   clause(M:'$tabled'(Head), true)
+    ->  true
+    ;   assertz(M:'$tabled'(Head))
+    ).
+dyn_tabling('$table_mode'(Head, Variant, Moded), M) :-
+    (   clause(M:'$table_mode'(Head, Variant0, Moded0), true, Ref)
+    ->  (   t(Head, Variant, Moded) =@= t(Head, Variant0, Moded0)
+        ->  true
+        ;   erase(Ref),
+            assertz(M:'$table_mode'(Head, Variant, Moded))
+        )
+    ;   assertz(M:'$table_mode'(Head, Variant, Moded))
+    ).
+
+%!  untable(M:PIList) is det.
+%
+%   Remove tabling for the predicates in  PIList.   This  can be used to
+%   undo the effect of table/1 at runtime.   In addition to removing the
+%   tabling instrumentation this also removes possibly associated tables
+%   using abolish_table_subgoals/1.
+%
+%   @arg PIList is a comma-list that is compatible ith table/1.
+
+untable(M:PIList) :-
+    untable(PIList, M).
+
+untable(Var, _) :-
+    var(Var),
+    !,
+    '$instantiation_error'(Var).
+untable((A,B), M) :-
+    !,
+    untable(A, M),
+    untable(B, M).
+untable(Name//Arity, M) :-
+    atom(Name), integer(Arity), Arity >= 0,
+    !,
+    Arity1 is Arity+2,
+    untable(Name/Arity1, M).
+untable(Name/Arity, M) :-
+    !,
+    functor(Head, Name, Arity),
+    (   predicate_property(M:Head, tabled(_))
+    ->  abolish_table_subgoals(M:Head),
+        dynamic(M:'$tabled'/1),
+        dynamic(M:'$table_mode'/3),
+        retractall(M:'$tabled'(Head)),
+        retractall(M:'$table_mode'(Head, _Variant, _Moded)),
+        unwrap_predicate(M:Name/Arity, table)
+    ;   true
+    ).
+untable(Head, M) :-
+    callable(Head),
+    !,
+    functor(Head, Name, Arity),
+    untable(Name/Arity, M).
+untable(TableSpec, _) :-
+    '$type_error'(table_desclaration, TableSpec).
+
 
 %!  start_tabling(:Wrapper, :Implementation)
 %
@@ -238,8 +327,9 @@ delim(Wrapper, Worker, WorkList, Delays) :-
         !
     ;   SourceCall = call_info(SrcSkeleton, SourceWL),
         '$tbl_add_global_delays'(Delays, AllDelays),
-        tdebug(wl_goal(SourceWL, SrcWrapper, _)),
-        tdebug(schedule, 'Suspended ~p, for solving ~p', [SrcWrapper, Wrapper]),
+        tdebug(wl_goal(SourceWL, SrcGoal, _)),
+        tdebug(wl_goal(WorkList, DstGoal, _)),
+        tdebug(schedule, 'Suspended ~p, for solving ~p', [SrcGoal, DstGoal]),
         '$tbl_wkl_add_suspension'(
             SourceWL,
             dependency(SrcSkeleton, Continuation, Wrapper, WorkList, AllDelays))
@@ -394,7 +484,8 @@ completion_step(WorkList) :-
         tdebug(wl_goal(WorkList, SourceGoal, _)),
         tdebug(wl_goal(TargetWorklist, TargetGoal, _Skeleton)),
         (   ModeArgs == Reserved
-        ->  tdebug(delay_goals(Delays, Cond)),
+        ->  tdebug('$tbl_add_global_delays'(Delays, AllDelays)),
+            tdebug(delay_goals(AllDelays, Cond)),
             tdebug(schedule, 'Resuming ~p, calling ~p with ~p (delays = ~p)',
                    [TargetGoal, SourceGoal, Answer, Cond]),
             Goal = Answer,
@@ -553,9 +644,11 @@ abolish_all_tables :-
 
 abolish_table_subgoals(M:SubGoal) :-
     '$tbl_variant_table'(VariantTrie),
+    !,
     current_module(M),
     forall(trie_gen(VariantTrie, M:SubGoal, Trie),
            '$tbl_destroy_table'(Trie)).
+abolish_table_subgoals(_).
 
 
                  /*******************************
@@ -831,9 +924,9 @@ system:term_expansion((:- table(Preds)),
 		 *      ANSWER COMPLETION	*
 		 *******************************/
 
-:- public answer_completion/1.
+:- public answer_completion/2.
 
-%!  answer_completion(+AnswerTrie) is det.
+%!  answer_completion(+AnswerTrie, +Return) is det.
 %
 %   Find  positive  loops  in  the  residual   program  and  remove  the
 %   corresponding answers, possibly causing   additional simplification.
@@ -847,18 +940,18 @@ system:term_expansion((:- table(Preds)),
 %   @author This code is by David Warren as part of XSB.
 %   @see called from C, pl-tabling.c, answer_completion()
 
-answer_completion(AnswerTrie) :-
+answer_completion(AnswerTrie, Return) :-
     tdebug(trie_goal(AnswerTrie, Goal, _Return)),
     tdebug(ac(start), 'START: Answer completion for ~p', [Goal]),
-    call_cleanup(answer_completion_guarded(AnswerTrie, Propagated),
-                 abolish_table_subgoals(eval_subgoal_in_residual(_))),
+    call_cleanup(answer_completion_guarded(AnswerTrie, Return, Propagated),
+                 abolish_table_subgoals(eval_subgoal_in_residual(_,_))),
     (   Propagated > 0
-    ->  answer_completion(AnswerTrie)
+    ->  answer_completion(AnswerTrie, Return)
     ;   true
     ).
 
-answer_completion_guarded(AnswerTrie, Propagated) :-
-    (   eval_subgoal_in_residual(AnswerTrie),
+answer_completion_guarded(AnswerTrie, Return, Propagated) :-
+    (   eval_subgoal_in_residual(AnswerTrie, Return),
         fail
     ;   true
     ),
@@ -878,9 +971,10 @@ delete_answers_for_failing_calls(Propagated) :-
     State = state(0),
     (   subgoal_residual_trie(ASGF, ESGF),
         \+ trie_gen(ESGF, _ETmp),
+        tdebug(trie_goal(ASGF, Goal0, _)),
         tdebug(trie_goal(ASGF, Goal, _0Return)),
         '$trie_gen_node'(ASGF, _0Return, ALeaf),
-        tdebug(ac(prune), '  Removing answer ~p', [Goal]),
+        tdebug(ac(prune), '  Removing answer ~p from ~p', [Goal, Goal0]),
 	'$tbl_force_truth_value'(ALeaf, false, Count),
         arg(1, State, Prop0),
         Prop is Prop0+Count-1,
@@ -891,7 +985,7 @@ delete_answers_for_failing_calls(Propagated) :-
 
 mark_succeeding_calls_as_answer_completed :-
     (   subgoal_residual_trie(ASGF, _ESGF),
-        (   '$tbl_answer_dl'(ASGF, _0Return, true)
+        (   '$tbl_answer_dl'(ASGF, _0Return, _True)
         ->  tdebug(trie_goal(ASGF, Answer, _0Return)),
             tdebug(trie_goal(ASGF, Goal, _0Return)),
             tdebug(ac(prune), '  Completed ~p on ~p', [Goal, Answer]),
@@ -904,7 +998,7 @@ mark_succeeding_calls_as_answer_completed :-
 subgoal_residual_trie(ASGF, ESGF) :-
     '$tbl_variant_table'(VariantTrie),
     context_module(M),
-    trie_gen(VariantTrie, M:eval_subgoal_in_residual(ASGF), ESGF).
+    trie_gen(VariantTrie, M:eval_subgoal_in_residual(ASGF, _), ESGF).
 
 %!  eval_dl_in_residual(+Condition)
 %
@@ -926,7 +1020,8 @@ eval_dl_in_residual(tnot(G)) :-
     !,
     tdebug(ac, ' ? tnot(~p)', [G]),
     current_table(G, SGF),
-    tnot(eval_subgoal_in_residual(SGF)).
+    '$tbl_table_status'(SGF, _Status, _Wrapper, Return),
+    tnot(eval_subgoal_in_residual(SGF, Return)).
 eval_dl_in_residual(G) :-
     tdebug(ac, ' ? ~p', [G]),
     (   current_table(G, SGF)
@@ -936,7 +1031,8 @@ eval_dl_in_residual(G) :-
     ;	writeln(user_error, 'MISSING CALL? '(G)),
         fail
     ),
-    eval_subgoal_in_residual(SGF).
+    '$tbl_table_status'(SGF, _Status, _Wrapper, Return),
+    eval_subgoal_in_residual(SGF, Return).
 
 more_general_table(G, Trie) :-
     term_variables(G, Vars),
@@ -952,15 +1048,29 @@ all_vars([H|T]) :-
     var(H),
     all_vars(T).
 
-:- table eval_subgoal_in_residual/1.
+:- table eval_subgoal_in_residual/2.
 
-%!  eval_subgoal_in_residual(+AnswerTrie)
+%!  eval_subgoal_in_residual(+AnswerTrie, ?Return)
 %
 %   Derive answers for the variant represented   by  AnswerTrie based on
 %   the residual goals only.
 
-eval_subgoal_in_residual(AnswerTrie) :-
-    '$tbl_answer'(AnswerTrie, _0Return, Condition),
-    tdebug(trie_goal(AnswerTrie, Goal, _0Return)),
+eval_subgoal_in_residual(AnswerTrie, _Return) :-
+    '$tbl_is_answer_completed'(AnswerTrie),
+    !,
+    undefined.
+eval_subgoal_in_residual(AnswerTrie, Return) :-
+    '$tbl_answer'(AnswerTrie, Return, Condition),
+    tdebug(trie_goal(AnswerTrie, Goal, Return)),
     tdebug(ac, 'Condition for ~p is ~p', [Goal, Condition]),
     eval_dl_in_residual(Condition).
+
+%!  undefined
+%
+%   Expresses the value _bottom_ from the well founded semantics.
+
+:- table
+    undefined/0.
+
+undefined :-
+    tnot(undefined).

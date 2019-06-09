@@ -33,9 +33,7 @@
 */
 
 :- module(wfs,
-          [ unknown/0,
-
-            call_residual_program/2,            % :Goal, -Clauses
+          [ call_residual_program/2,            % :Goal, -Clauses
 
             call_delays/2,                      % :Goal, -Delays
             delays_residual_program/2,          % +Delays, -Clauses
@@ -58,16 +56,6 @@ Semantics (WFS) support in SWI-Prolog.
     delays_residual_program(:, :),
     call_residual_program(0, :),
     answer_residual(:, :).
-
-:- table
-    unknown/0.
-
-%!  unknown
-%
-%   Expresses the value _bottom_ from the well founded semantics.
-
-unknown :-
-    tnot(unknown).
 
 %!  call_delays(:Goal, -Delays)
 %
