@@ -78,6 +78,7 @@ typedef struct tbl_component
   size_t		simplifications;        /* # simplifications */
   struct tbl_component *parent;
   component_set        *children;		/* Child components */
+  component_set        *merged;			/* Child components */
   worklist_set         *worklist;		/* Worklist of current query */
   worklist_set         *created_worklists;	/* Worklists created */
   worklist_set	       *delay_worklists;	/* Worklists in need for delays */
@@ -102,7 +103,6 @@ typedef struct worklist
   cluster      *riac;			/* rightmost inner answer cluster */
   cluster      *free_clusters;		/* clusters to reuse */
   int		magic;			/* WORKLIST_MAGIC */
-  unsigned	completed : 1;		/* Really completed */
   unsigned	ground : 1;		/* Ground call (early completion) */
   unsigned	executing : 1;		/* $tbl_wkl_work/3 in progress */
   unsigned	in_global_wl : 1;	/* already in global worklist */
@@ -110,6 +110,7 @@ typedef struct worklist
   unsigned	neg_delayed : 1;	/* Negative node was delayed */
   unsigned	has_answers : 1;	/* At least one unconditional answer */
   unsigned	answer_completed : 1;	/* Is answer completed */
+  unsigned	depend_abolish : 1;	/* Scheduled for depending abolish */
   size_t	undefined;		/* #undefined answers */
 
   tbl_component*component;		/* component I belong to */
@@ -169,11 +170,44 @@ typedef struct delay_info
 
 
 		 /*******************************
+		 *	       IDG		*
+		 *******************************/
+
+typedef struct idg_node
+{ Table		affected;		/* parent nodes */
+  Table		dependent;		/* childs */
+  trie	       *atrie;			/* answer trie */
+  size_t	answer_count;		/* #answers in previous complete state */
+  unsigned	new_answer : 1;		/* Update generated a new answer */
+  unsigned	reevaluating : 1;	/* currently re-evaluating */
+  unsigned	aborted : 1;		/* re-evaluation was aborted */
+  int		falsecount;		/* Invalidate count */
+#ifdef O_TRIE_STATS
+  struct
+  { uint64_t	invalidated;		/* # times it was invalidated */
+    uint64_t	reevaluated;		/* # times it was re-evaluated */
+  } stats;
+#endif
+} idg_node;
+
+
+typedef struct trie_array
+{ trie **blocks[MAX_BLOCKS];
+  trie *preallocated[7];
+} trie_array;
+
+
+		 /*******************************
 		 *	     PROTOTYPES		*
 		 *******************************/
 
 COMMON(void)	clearThreadTablingData(PL_local_data_t *ld);
 COMMON(term_t)	init_delay_list(void);
-COMMON(void)	destroy_delay_info(delay_info *di);
-
+COMMON(void)	tbl_push_delay(atom_t atrie, Word wrapper,
+			       trie_node *answer ARG_LD);
+COMMON(int)	answer_is_conditional(trie_node *answer);
+COMMON(void)	untable_from_clause(Clause cl);
+COMMON(void)	initTabling(void);
+COMMON(int)	idg_add_dyncall(Definition def, trie *ctrie,
+				term_t variant ARG_LD);
 #endif /*_PL_TABLING_H*/
