@@ -50,11 +50,13 @@
 
             convert_setting_text/3      % +Type, +Text, -Value
           ]).
-:- use_module(library(error)).
-:- use_module(library(broadcast)).
-:- use_module(library(debug)).
-:- use_module(library(option)).
-:- use_module(library(arithmetic)).
+:- use_module(library(arithmetic),[arithmetic_expression_value/2]).
+
+:- autoload(library(broadcast),[broadcast/1]).
+:- autoload(library(debug),[debug/3]).
+:- autoload(library(error),[must_be/2,existence_error/2,type_error/2]).
+:- autoload(library(option),[option/3]).
+
 :- set_prolog_flag(generate_debug_info, false).
 
 /** <module> Setting management
@@ -533,15 +535,20 @@ store_setting(setting(Module:Name, Value), Options) :-
 store_setting(Term, _) :-
     type_error(setting, Term).
 
-%!  save_settings is det.
-%!  save_settings(+File) is det.
+%!  save_settings is semidet.
+%!  save_settings(+File) is semidet.
 %
-%   Save modified settings to File.
+%   Save modified settings to File. Fails  silently if the settings file
+%   cannot be written.
+%
+%   @error context_error(settings, no_default_file)  for save_settings/0
+%   if no default location is known.
 
 save_settings :-
-    local_file(File),
-    !,
-    save_settings(File).
+    (   local_file(File)
+    ->  save_settings(File)
+    ;   throw(error(context_error(settings, no_default_file), _))
+    ).
 
 save_settings(File) :-
     absolute_file_name(File, Path,
@@ -655,7 +662,8 @@ list_setting(Module:Name, TS1, TS2) :-
     ->  Modified = (*)
     ;   Modified = ''
     ),
-    format('~w~t~*| ~q~w~t~*| ~w~n', [Module:Name, TS1, Value, Modified, TS2, Comment]).
+    format('~w~t~*| ~q~w~t~*| ~w~n',
+           [Module:Name, TS1, Value, Modified, TS2, Comment]).
 
 
                  /*******************************
@@ -710,3 +718,14 @@ convert_setting_text(Type, Atom, Term) :-
     sandbox:safe_meta_predicate/1.
 
 sandbox:safe_meta_predicate(settings:setting/2).
+
+
+		 /*******************************
+		 *           MESSAGES		*
+		 *******************************/
+
+:- multifile
+    prolog:error_message//1.
+
+prolog:error_message(context_error(settings, no_default_file)) -->
+    [ 'save_settings/0: no default file' ].

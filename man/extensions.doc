@@ -58,7 +58,7 @@ read_term/2 to read \verb$.(a,[])$ as \verb$[a]$ and write_term/2 to
 write \verb$[a]$ as \verb$.(a,[])$.
 
 
-\subsection{Motivating '\Scons' and \Snil{} for lists}
+\subsection{Motivating '\Scons{}' and \Snil{} for lists}
 \label{sec:ext-list-motivation}
 
 Representing lists the conventional way using \functor{.}{2} as
@@ -375,7 +375,7 @@ main ways to represent text: using strings, atoms or code lists. This
 section explains what to choose for what purpose. Both strings and atoms
 are \jargon{atomic} objects: you can only look inside them using
 dedicated predicates. Lists of character codes are compound
-datastructures.
+data structures.
 
 \begin{description}
     \item [Lists of character codes]
@@ -1030,7 +1030,7 @@ True when \arg{Key}-\arg{Value} is in \arg{DictIn} and \arg{DictOut}
 contains all associations of \arg{DictIn} except for \arg{Key}.
 
     \infixop[semidet]{:<}{+Select}{+From}
-True when \arg{Select} is a `sub dict' of \arg{From}: the tages
+True when \arg{Select} is a `sub dict' of \arg{From}: the tags
 must unify and all keys in \arg{Select} must appear with unifying
 values in \arg{From}.  \arg{From} may contain keys that are not in
 \arg{Select}.  This operation is frequently used to \emph{match}
@@ -1221,7 +1221,7 @@ have a more natural syntax.
 
     \item [Library \pllib{pairs}]
 This library is commonly used to process large name-value associations.
-In many cases this concerns short-lived datastructures that result from
+In many cases this concerns short-lived data structures that result from
 findall/3, maplist/3 and similar list processing predicates. Dicts may
 play a role if frequent random key lookups are needed on the resulting
 association. For example, the skeleton `create a pairs list', `use

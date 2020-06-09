@@ -68,6 +68,10 @@ Gives a summary of the most important options.
 .B \-\-version
 Displays version and architecture information.
 .TP
+.B \-\-abi\-version
+Displays ABI version key.  This key indicates binary compatibility of
+various interfaces.
+.TP
 .B \-\-arch
 Prints the architecture identifier.
 .TP
@@ -151,7 +155,7 @@ if Prolog was compiled for multi-threading and
 otherwise.
 .RE
 .TP
-.BI \-\-stack_limit= size [bkmg]
+.BI \-\-stack\-limit= size [bkmg]
 Sets the combined stack limit to
 .IR size " bytes."
 The suffix is case insensitive and defines the unit as
@@ -160,12 +164,12 @@ The suffix is case insensitive and defines the unit as
 .IR m " (Mbytes) or "
 .IR g " (Gbytes)."
 .TP
-.BI \-\-table_space= size [bkmg]
+.BI \-\-table\-space= size [bkmg]
 Sets the space limit for tables use for SLG resolution
 (tabling) to
 .IR size " bytes."
 The suffixes are the same as for the
-.B --stack_limit
+.B --stack-limit
 option.
 .TP
 .BI \-O
@@ -191,11 +195,14 @@ Set debug level to
 .IR level .
 This option is for system maintenance and is given for reference only.
 .TP
+.BR \-\-packs [=bool]
+Disable attaching extension packs (add-ons).
+.TP
 .BI \-f " file"
 Use
 .I "file"
 as initialisation file instead of
-.RB "`" .swiplrc "'. `" "-f none" "'"
+.RB "`" init.pl "'. `" "-f none" "'"
 stops SWI-Prolog from searching for an initialisation file.
 .TP
 .BI \-F " file"
@@ -386,11 +393,9 @@ has probably been moved.  Use
 .P
 to find the local installation directory of SWI-Prolog.
 .TP
-.I ~/.swiplrc
+.I ~/.config/swi-prolog/init.pl
 Personal initialisation files consulted by SWI-Prolog on startup.
-If both exist
-.I .swiplrc
-is used.
+The exact location depends on the OS.
 .TP
 .I @prefix@/lib/@PL@-@PLVERSION@/bin/@PLARCH@/
 Location for the executables.

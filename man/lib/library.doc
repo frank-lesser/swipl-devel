@@ -43,7 +43,9 @@ documented at all.
 \input{dicts}
 \input{error}
 \input{gensym}
+\input{intercept}
 \input{iostream}
+\input{listing}
 \input{lists}
 \input{main}
 \input{nbset}
@@ -56,6 +58,7 @@ documented at all.
 \input{persistency}
 \input{pio}
 \input{predicateoptions}
+\input{prologjiti}
 \input{prologpack}
 \input{prologxref}
 \input{quasiquotations}
@@ -64,8 +67,10 @@ documented at all.
 \input{record}
 \input{registry}
 \input{settings}
-\input{simplex}
+\InputIfFileExists{simplex}{}{}
 \input{solutionsequences}
+\input{tables}
+\input{thread}
 \input{threadpool}
 \input{ugraphs}
 \input{url}

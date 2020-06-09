@@ -109,11 +109,47 @@ expand_term(Term, Pos0, [], Pos) :-
     atomic_pos(Pos0, Pos).
 expand_term(Term, Pos0, Expanded, Pos) :-
     b_setval('$term', Term),
+    prepare_directive(Term),
     '$def_modules'([term_expansion/4,term_expansion/2], MList),
     call_term_expansion(MList, Term, Pos0, Term1, Pos1),
     expand_terms(expand_term_2, Term1, Pos1, Term2, Pos),
     rename(Term2, Expanded),
     b_setval('$term', []).
+
+%!  prepare_directive(+Directive) is det.
+%
+%   Try to autoload goals associated with a   directive such that we can
+%   allow for term expansion of autoloaded directives such as setting/4.
+%   Trying to do so shall raise no errors  nor fail as the directive may
+%   be further expanded.
+
+prepare_directive((:- Directive)) :-
+    '$current_source_module'(M),
+    prepare_directive(Directive, M),
+    !.
+prepare_directive(_).
+
+prepare_directive(Goal, _) :-
+    \+ callable(Goal),
+    !.
+prepare_directive((A,B), Module) :-
+    !,
+    prepare_directive(A, Module),
+    prepare_directive(B, Module).
+prepare_directive(module(_,_), _) :- !.
+prepare_directive(Goal, Module) :-
+    '$get_predicate_attribute'(Module:Goal, defined, 1),
+    !.
+prepare_directive(Goal, Module) :-
+    \+ current_prolog_flag(autoload, false),
+    (   compound(Goal)
+    ->  compound_name_arity(Goal, Name, Arity)
+    ;   Name = Goal, Arity = 0
+    ),
+    '$autoload'(Module:Name/Arity),
+    !.
+prepare_directive(_, _).
+
 
 call_term_expansion([], Term, Pos, Term, Pos).
 call_term_expansion([M-Preds|T], Term0, Pos0, Term, Pos) :-
@@ -144,12 +180,31 @@ call_term_expansion([M-Preds|T], Term0, Pos0, Term, Pos) :-
 expand_term_2((Head --> Body), Pos0, Expanded, Pos) :-
     dcg_translate_rule((Head --> Body), Pos0, Expanded0, Pos1),
     !,
-    expand_bodies(Expanded0, Pos1, Expanded, Pos).
+    expand_bodies(Expanded0, Pos1, Expanded1, Pos),
+    non_terminal_decl(Expanded1, Expanded).
 expand_term_2(Term0, Pos0, Term, Pos) :-
     nonvar(Term0),
     !,
     expand_bodies(Term0, Pos0, Term, Pos).
 expand_term_2(Term, Pos, Term, Pos).
+
+non_terminal_decl(Clause, Decl) :-
+    \+ current_prolog_flag(xref, true),
+    clause_head(Clause, Head),
+    '$current_source_module'(M),
+    (   '$get_predicate_attribute'(M:Head, non_terminal, NT)
+    ->  NT == 0
+    ;   true
+    ),
+    !,
+    '$pi_head'(PI, Head),
+    Decl = [:-(non_terminal(M:PI)), Clause].
+non_terminal_decl(Clause, Clause).
+
+clause_head(Head:-_, Head) :- !.
+clause_head(Head, Head).
+
+
 
 %!  expand_bodies(+Term, +Pos0, -Out, -Pos) is det.
 %
@@ -396,8 +451,13 @@ prop_var(fresh(Fresh), Var) :-
     ;   Fresh = true
     ).
 prop_var(singleton(Singleton), Var) :-
-    get_attr(Var, '$var_info', Info),
-    get_dict(singleton, Info, Singleton).
+    nb_current('$term', Term),
+    term_singletons(Term, Singletons),
+    (   '$member'(V, Singletons),
+        V == Var
+    ->  Singleton = true
+    ;   Singleton = false
+    ).
 prop_var(name(Name), Var) :-
     (   nb_current('$variable_names', Bindings),
         '$member'(Name0=Var0, Bindings),
@@ -905,8 +965,9 @@ call_goal_expansion(MList, G0, P0, G, P) :-
 
 allowed_expansion(QGoal) :-
     strip_module(QGoal, M, Goal),
+    E = error(Formal,_),
     catch(prolog:sandbox_allowed_expansion(M:Goal), E, true),
-    (   var(E)
+    (   var(Formal)
     ->  fail
     ;   !,
         print_message(error, E),
