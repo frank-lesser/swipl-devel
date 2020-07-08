@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker and Anjo Anjewierden
     E-mail:        J.Wielemaker@cs.vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  1996-2019, University of Amsterdam
+    Copyright (c)  1996-2020, University of Amsterdam
                               VU University Amsterdam
 			      CWI, Amsterdam
     All rights reserved.
@@ -2787,10 +2787,14 @@ testdir('Tests/debug').
 testdir('Tests/library').
 testdir('Tests/charset').
 testdir('Tests/eclipse').
+testdir('Tests/files').
 testdir('Tests/clp').
 testdir('Tests/GC').
 testdir('Tests/thread') :-
 	current_prolog_flag(threads, true).
+testdir('Tests/thread_wait') :-
+	current_prolog_flag(threads, true).
+testdir('Tests/transaction').
 testdir('Tests/save').
 testdir('Tests/tabling').
 testdir('Tests/xsb/basic_tests').

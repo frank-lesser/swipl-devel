@@ -2291,7 +2291,7 @@ get_answer_table(Definition def, term_t t, term_t ret, atom_t *clrefp,
 	return NULL;
       }
     }
-    shared = !!true(def, P_TSHARED);
+    shared = def->tabling && true(def->tabling, TP_SHARED);
   }
 #else
   shared = FALSE;
@@ -6538,7 +6538,8 @@ tbl_is_predicate_attribute(atom_t key)
 	   key == ATOM_subgoal_abstract ||
 	   key == ATOM_answer_abstract ||
 	   key == ATOM_max_answers ||
-	   key == ATOM_monotonic
+	   key == ATOM_monotonic ||
+	   key == ATOM_tshared
 	 );
 }
 
@@ -6571,6 +6572,8 @@ tbl_get_predicate_attribute(Definition def, atom_t att, term_t value)
 
     if ( att == ATOM_monotonic )
     { return PL_unify_integer(value, !!true(p, TP_MONOTONIC));
+    } else if ( att == ATOM_tshared )
+    { return PL_unify_integer(value, !!true(p, TP_SHARED));
     } else
     { size_t v0;
 
@@ -6643,6 +6646,8 @@ tbl_set_predicate_attribute(Definition def, atom_t att, term_t value)
 
   if ( att == ATOM_monotonic )
   { return set_bool_attr(p, TP_MONOTONIC, value);
+  } else if ( att == ATOM_tshared )
+  { return set_bool_attr(p, TP_SHARED, value);
   } else
   { size_t v;
 
@@ -7116,7 +7121,7 @@ wait_for_table_to_complete(trie *atrie)
 	print_answer_table(atrie, "waiting for %d to complete", atrie->tid));
 
   do
-  { if ( cv_wait(&GD->tabling.cvar, &GD->tabling.mutex.mutex) == EINTR )
+  { if ( cv_wait(&GD->tabling.cvar, &GD->tabling.mutex.mutex) == CV_INTR )
     { if ( PL_handle_signals() < 0 )
       { DEBUG(MSG_TABLING_SHARED,
 	      print_answer_table(atrie, "Ready (interrupted"));

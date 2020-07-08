@@ -2328,15 +2328,17 @@ The same warning as for call_cleanup/2 applies.
 
 The predicates reset/3 and shift/1 implement \jargon{delimited
 continuations} for Prolog. Delimited continuation for Prolog is
-described in \cite{DBLP:journals/tplp/SchrijversDDW13}. The mechanism
-allows for proper \jargon{coroutines}, two or more routines whose
-execution is interleaved, while they exchange data. Note that coroutines
-in this sense differ from coroutines realised using attributed variables
-as described in \chapref{clp}.
+described in \cite{DBLP:journals/tplp/SchrijversDDW13}
+(\href{http://www.open-std.org/jtc1/sc22/wg14/www/docs/n1124.pdf}{preprint
+PDF}). The mechanism allows for proper \jargon{coroutines}, two or more
+routines whose execution is interleaved, while they exchange data. Note
+that coroutines in this sense differ from coroutines realised using
+attributed variables as described in \chapref{clp}.
 
-The suspension mechanism provided by delimited continuations is use to
-implement of \jargon{tabling} \cite{DBLP:journals/tplp/DesouterDS15},
-see \secref{tabling}.
+The suspension mechanism provided by delimited continuations is used to
+implement \jargon{tabling} \cite{DBLP:journals/tplp/DesouterDS15},
+(\href{https://www.cambridge.org/core/journals/theory-and-practice-of-logic-programming/article/div-classtitletabling-as-a-library-with-delimited-controldiv/227B7C0227FD715CF159B6AF894DE96E}{available
+here}). See \secref{tabling}.
 
 \begin{description}
     \predicate{reset}{3}{:Goal, ?Ball, -Continuation}
@@ -2536,20 +2538,89 @@ prolog_exception_hook/4 can be used to add more debugging facilities to
 exceptions. An example is the library \pllib{http/http_error},
 generating a full stack trace on errors in the HTTP server library.
 
+\subsection{The exception term}         \label{sec:exceptterm}
 
-\subsection{The exception term}		\label{sec:exceptterm}
 
-Built-in predicates generate exceptions using a term
-\term{error}{Formal, Context}.  The first argument is the `formal'
-description of the error, specifying the class and generic defined
-context information.  When applicable, the ISO error term definition
-is used.  The second part describes some additional context to help
-the programmer while debugging.  In its most generic form this is
-a term of the form \term{context}{Name/Arity, Message}, where
-\arg{Name}/\arg{Arity} describes the built-in predicate that raised
-the error, and \arg{Message} provides an additional description of
-the error.  Any part of this structure may be a variable if no
-information was present.
+\subsubsection{General form of the ISO standard exception term}
+\label{sec:generalformofexceptionterm}
+
+The predicate throw/1 takes a single argument, the \jargon{exception
+term}, and the ISO standard stipulates that the exception term
+be of the form \term{error}{Formal, Context} with:
+
+\begin{itemlist}
+\item [\arg{Formal}] the `formal' description of the error, as
+listed in chapter 7.12.2 pp. 62-63 ("Error classification") of the
+ISO standard. It indicates the \jargon{error class} and possibly
+relevant \jargon{error context} information.
+It may be a compound term of arity 1,2 or 3 - or simply an atom if
+there is no relevant error context information.
+
+\item [\arg{Context}] gives additional context information beyond
+the one in \arg{Formal}. If may be unset, i.e. a fresh variable, or
+set to something that hopefully will help the programmer in debugging.
+The structure of \arg{Context} is left unspecified by the ISO
+Standard, so SWI-Prolog creates it own convention (see below).
+\end{itemlist}
+
+Thus, constructing an error term and throwing it might take
+this form (although you would not use the explicit naming given here
+for illustration purposes, but write the term to throw directly):
+
+\begin{code}
+Exception = error(Formal, Context),
+Context   = ... some local convention ...,
+Formal    = type_error(ValidType, Culprit), % for "type error" for example
+ValidType = integer,                        % valid atoms are listed in the ISO standard
+Culprit   = ... some value ...,
+throw(Exception)
+\end{code}
+
+
+\subsubsection{Throwing exceptions from applications and libraries}
+\label{sec:throwsfromuserpreds}
+
+User predicates are free to choose the structure of their \jargon{exception
+term}s (i.e., they can define their own conventions) but \emph{should}
+adhere to the ISO standard if possible, in particular for libraries.
+
+Notably, exceptions of the shape \term{error}{Formal,Context} are
+recognised by the development tools and therefore expressing unexpected
+situations using these exceptions improves the debugging experience.
+
+In SWI-Prolog, the second argument of the exception term, i.e. the
+\arg{Context} argument, is generally of the form
+\term{context}{Location, Message}, where:
+
+\begin{itemlist}
+\item [\arg{Location}] describes the execution context in which the
+exception occurred. While the \arg{Location} argument may be specified
+as a predicate indicator (\arg{Name}/\arg{Arity}), it is typically filled
+by the \pllib{prolog_stack} library. This library recognises uncaught
+errors or errors caught by catch_with_backtrace/3 and fills the
+\arg{Location} argument with a \jargon{backtrace}.
+
+\item [\arg{Message}] provides an additional description of the error
+or can be left as a fresh variable if there is nothing appropriate to
+fill in.
+\end{itemlist}
+
+ISO standard exceptions can be thrown via the predicates exported
+from \pllib{error}. Termwise, these predicates look exactly like the
+\arg{Formal} of the ISO standard error term they throw:
+
+\begin{itemlist}
+\item instantiation_error/1 (the argument is not used: ISO specifies no argument)
+\item uninstantiation_error/1
+\item type_error/2
+\item domain_error/2
+\item existence_error/2
+\item existence_error/3 (a SWI-Prolog extension that is not ISO)
+\item permission_error/3
+\item representation_error/1
+\item resource_error/1
+\item syntax_error/1
+\end{itemlist}
 
 
 \subsection{Printing messages}			\label{sec:printmsg}
@@ -3291,6 +3362,118 @@ Equivalent to asserta/1, assertz/1, assert/1, but in addition unifies
 \arg{Reference} with a handle to the asserted clauses. The handle can be
 used to access this clause with clause/3 and erase/1.
 \end{description}
+
+\subsubsection{Transactions}
+\label{sec:transactions}
+
+\index{transaction}%
+\index{isolation}%
+Traditionally, Prolog database updates add or remove individual clauses.
+The \jargon{Logical Update View} ensures that a goal that is started on
+a dynamic predicate does not see modifications due to assert/1 or
+retract/1 during its life time. See \secref{update}. In a multi-threaded
+context this assumption still holds for individual predicates:
+concurrent modifications to a dynamic predicate are invisible.
+
+\jargon{Transactions} allow running a goal in \jargon{isolation}.
+Database changes from other threads are invisible while changes inside
+the transaction are invisible to other threads and become
+\jargon{atomically} visible to other threads if the transaction is
+\jargon{committed}. Transactions have several benefits
+\cite{DBLP:journals/corr/abs-1301-7669}
+
+\begin{itemize}
+    \item If a database update requires multiple assert/1
+    and/or retract/1 operations, a transaction ensure either all
+    are executed or the database remains unchanged.  Notably
+    unexpected exceptions or failures cannot leave the database
+    in an inconsistent state.
+
+    \item Other threads do not see the intermediate inconsistent
+    states when performing a database update as above.  Notably,
+    this avoids the need for locking for a database update that
+    updates a clause by retracting it and asserting a new one.
+    For example, when using the code below to update
+    \nopredref{temperature}{1}, consumers of this fact do not
+    need synchronization because \nopredref{temperature}{1}
+    is always present and always has exactly one clause.
+
+\begin{code}
+update_temperature(Temp) :-
+    transaction(( retractall(temperature(_)),
+		  asserta(temperature(Temp)))).
+\end{code}
+
+    \item Transactions allow for ``what if'' reasoning over the
+    dynamic database.  This is particularly useful when combined
+    with the deductive database facilities provided by tabling
+    (see \secref{tabling}).
+\end{itemize}
+
+SWI-Prolog transactions only affect the \emph{dynamic} database. Static
+predicates are globally visible and shared at all times. In particular,
+transactions do not affect loading source files and thus, source files
+loaded inside a transaction (e.g., due to \jargon{autoloading}) are
+immediately globally visible. This may pose problems if loading source
+files provide clauses for dynamic predicates.
+
+\begin{description}
+    \predicate{transaction}{1}{:Goal}
+Run \arg{Goal} as once/1 in a transaction. This implies that access to
+dynamic predicates sees the dynamic predicates at the moment the
+transaction is started, together with the modifications issued by
+\arg{Goal}. Thus, \arg{Goal} does not see changes to dynamic predicates
+from other threads and other threads do not see modifications by
+\arg{Goal} (\jargon{isolation}). If \arg{Goal} succeeds, all
+modifications become \jargon{atomically} visible to the other threads.
+If \arg{Goal} fails or raises an exception all local modifications are
+discarded and transaction/1 fails or passes the exception.
+
+Currently the number of database changes inside a transaction (or
+snapshot, see snapshot/1) is limited to $\pow{2}{32}-1$. If this limit
+is exceeded a \verb$representation_error(transaction_generations)$
+exception is raised.
+
+Transactions may be nested. The above mentioned limitation for the
+number of database changes applies to the combined number in nested
+transactions. A discarded nested transaction or snapshot resets the
+database counter for the outer transaction.
+
+    \predicate{snapshot}{1}{:Goal}
+Similar to transaction/1, but \emph{always} discards the local
+modifications. In other words, snapshot/1 allows a thread to examine a
+frozen state of the dynamic predicates and/or make isolated
+modifications without affecting other threads and without making
+permanent changes to the database.
+
+    \predicate[nondet]{current_transaction}{1}{-Goal}
+True when called inside a transaction running \arg{Goal}. This predicate
+generates candidates from the current (nested) transaction outward.
+\arg{Goal} is a plain goal if the calling context module is the same
+as matching transaction/1 or snapshot/1 and a qualified callable term
+otherwise.  Note that this only enumerates transactions in the current
+thread.
+\end{description}
+
+\paragraph{Issues} The current implementation does \textbf{not} guard
+against multiple transactions performing conflicting database updates.
+For example, running the above \nopredref{update_temperature}{1}
+concurrently may result in a situation where we have multiple clauses
+for \nopredref{temperature}{1}. If two transactions run this at the same
+time, both will remove the existing clause and both will add a new
+clause. Currently the only way to gurantee consistency is by wrapping
+transactions that may perform conflicting updates using with_mutex/2.
+Future versions may provide database \jargon{constraints} to prevent a
+transaction from creating an inconsistent state.
+
+\paragraph{Status} SWI-Prolog transaction management is highly
+experimental. Interaction with other parts of the system such as the
+library \pllib{persistency}, incremental tabling
+(\secref{tabling-incremental}), etc.\ still have to be settled. Future
+versions may also support non-determinism through transactions and
+snapshots.  This is merely a first step to explore isolated changes to
+the dynamic predicate database.
+
 
 \subsection{The recorded database}
 \label{sec:recdb}
@@ -6279,102 +6462,140 @@ or a compound term allocated at the same address.
 
 \section{Analysing and Constructing Atoms}	\label{sec:manipatom}
 
-These predicates convert between Prolog constants and lists of character
-codes. The predicates atom_codes/2, number_codes/2 and name/2 behave
-the same when converting from a constant to a list of character codes.
-When converting the other way around, atom_codes/2 will generate an
-atom, number_codes/2 will generate a number or exception and name/2 will
-return a number if possible and an atom otherwise.
+These predicates convert between certain Prolog atomic values on one
+hand and lists of \jargon{character codes} (or, for atom_chars/2,
+\jargon{characters}) on the other. The Prolog atomic values can be
+atoms, \jargon{character}s (which are atoms of length 1), SWI-Prolog
+strings, as well as numbers (integers, floats and non-integer
+rationals).
 
-The ISO standard defines atom_chars/2 to describe the `broken-up'
-atom as a list of one-character atoms instead of a list of codes.  Up to
-version 3.2.x, SWI-Prolog's atom_chars/2 behaved like atom_codes, compatible with
-Quintus and SICStus Prolog. As of 3.3.x, SWI-Prolog
-atom_codes/2 and atom_chars/2 are compliant to the ISO standard.
+The \jargon{character codes}, also known as \jargon{code values}, are
+integers. In SWI-Prolog, these integers are Unicode code points.\bug{On
+Windows the range is limited to UCS-2, 0..65535.}
 
-To ease the pain of all variations in the Prolog community, all
-SWI-Prolog predicates behave as flexible as possible.  This implies
-the `list-side' accepts either a code-list or a char-list and the
-`atom-side' accepts all atomic types (atom, number and string).
+To ease the pain of all text representation variations in the Prolog
+community, all SWI-Prolog predicates behave as \emph{flexible as
+possible}. This implies the `list-side' accepts both a
+character-code-list and a character-list and the `atom-side' accepts all
+atomic types (atom, number and string). For example, the predicates
+atom_codes/2, number_codes/2 and name/2 behave the same in mode (+,-),
+i.e., `listwards', from a constant to a list of character codes. When
+converting the other way around:
+
+\begin{itemize}
+   \item atom_codes/2 will generate an atom;
+   \item number_codes/2 will generate a number or throw an exception;
+   \item name/2 will generate a number if possible and an atom otherwise.
+\end{itemize}
 
 \begin{description}
-    \predicate[ISO]{atom_codes}{2}{?Atom, ?String}
-Convert between an atom and a list of character codes. If
-\arg{Atom} is instantiated, it will be translated into a list of character
-codes and the result is unified with \arg{String}. If \arg{Atom}
-is unbound and \arg{String} is a list of character codes,
-\arg{Atom} will be unified with an atom constructed from this list.
+    \predicate[ISO]{atom_codes}{2}{?Atom, ?CodeList}
+Convert between an atom and a list of \jargon{character codes} (integers
+denoting characters).
 
+\begin{itemize}
+   \item If \arg{Atom} is instantiated, it will be translated into a list of
+character codes, which are unified with \arg{CodeList}.
+   \item If \arg{Atom} is uninstantiated and \arg{CodeList} is a list of
+character codes, then \arg{Atom} will be unified with an atom constructed
+from this list.
+\end{itemize}
+
+\begin{code}
+?- atom_codes(hello, X).
+X = [104, 101, 108, 108, 111].
+\end{code}
+
+The `listwards' call to atom_codes/2 can also be written
+(functionally) using backquotes instead:
+
+\begin{code}
+?- Cs = `hello`.
+Cs = [104, 101, 108, 108, 111].
+\end{code}
+
+Backquoted strings can be mostly found in the body of DCG rules that
+process lists of character codes.
+
+Note that this is the default interpretation for backquotes. It can be
+changed on a per-module basis by setting the value of the Prolog flag
+\prologflag{back_quotes}.
 
     \predicate[ISO]{atom_chars}{2}{?Atom, ?CharList}
-As atom_codes/2, but \arg{CharList} is a list of one-character atoms
-rather than a list of character codes.%
-	\footnote{Up to version 3.2.x, atom_chars/2 behaved as the
-		  current atom_codes/2.  The current definition is
-		  compliant with the ISO standard.}
+Similar to atom_codes/2, but \arg{CharList} is a list of \jargon{character}s
+(atoms of length 1) rather than a list of \jargon{character codes} (integers
+denoting characters).
+
 \begin{code}
 ?- atom_chars(hello, X).
-
 X = [h, e, l, l, o]
 \end{code}
+
     \predicate[ISO]{char_code}{2}{?Atom, ?Code}
-Convert between character and character code for a single
-character.%
-	\footnote{This is also called \nopredref{atom_char}{2} in older
-	versions of SWI-Prolog as well as some other Prolog
-	implementations. The \nopredref{atom_char}{2} predicate is
-	available from the library \file{backcomp.pl}}
+Convert between a single \jargon{character} (an atom of length 1), and its
+\jargon{character code} (an integer denoting the corresponding character).
+The predicate alternatively accepts an SWI-Prolog string of
+length 1 at \arg{Atom} place.
 
     \predicate[ISO]{number_chars}{2}{?Number, ?CharList}
 Similar to atom_chars/2, but converts between a number and its
-representation as a list of one-character atoms. If \arg{CharList} is a
+representation as a list of \jargon{characters} (atoms of length 1).
+
+\begin{itemize}
+   \item If \arg{CharList} is a
 \jargon{proper list}, i.e., not unbound or a \jargon{partial list},
 \arg{CharList} is parsed according to the Prolog syntax for numbers and
-the resulting number is unified with \arg{Number}. Otherwise, if
-\arg{Number} is a number, \arg{Number} is serialized and the result is
-unified with \arg{CharList}.
+the resulting number is unified with \arg{Number}. A \except{syntax_error}
+exception is raised if \arg{CharList} is instantiated to a ground, proper
+list but does not represent a valid Prolog number.
+   \item Otherwise, if \arg{Number} is indeed a number, \arg{Number} is
+serialized and the result is unified with \arg{CharList}.
+\end{itemize}
 
-If \arg{CharList} is parsed, it is parsed using the Prolog syntax for
-numbers. Following the ISO standard, it allows for \emph{leading} white
-space (including newlines) and does not allow for \emph{trailing} white
-space.\footnote{ISO also allows for Prolog comments in leading white
-space. We--and most other implementations--believe this is incorrect. We
-also believe it would have been better not to allow for white space, or
-to allow for both leading and trailing white space. Prolog syntax-based
-conversion can also be achieved using format/3 and read_from_chars/2.}
-A \except{syntax_error} exception is raised if \arg{CharList} does not
-represent a valid Prolog number.
+Following the ISO standard, the Prolog syntax for number allows for
+\emph{leading} white space (including newlines) and does not allow for
+\emph{trailing} white space.\footnote{ISO also allows for Prolog
+comments in leading white space. We--and most other
+implementations--believe this is incorrect. We also believe it would
+have been better not to allow for white space, or to allow for both
+leading and trailing white space.}
+
+Prolog syntax-based conversion can also be achieved using format/3 and
+read_from_chars/2.
 
     \predicate[ISO]{number_codes}{2}{?Number, ?CodeList}
-As number_chars/2, but converts to a list of character codes rather
-than one-character atoms.  In the mode (-,+), both predicates
+As number_chars/2, but converts to a list of character codes
+rather than characters.  In the mode (-,+), both predicates
 behave identically to improve handling of non-ISO source.
 
     \predicate{atom_number}{2}{?Atom, ?Number}
 Realises the popular combination of atom_codes/2 and number_codes/2 to
-convert between atom and number (integer or float) in one predicate,
-avoiding the intermediate list. Unlike the ISO number_codes/2
-predicates, atom_number/2 fails silently in mode (+,-) if \arg{Atom}
-does not represent a number.\footnote{Versions prior to 6.1.7 raised a
-syntax error, compliant to number_codes/2} See also atomic_list_concat/2
-for assembling an atom from atoms and numbers.
+convert between atom and number (integer, float or non-integer rational)
+in one predicate, avoiding the intermediate list. Unlike the ISO
+standard number_codes/2 predicates, atom_number/2 fails silently in mode
+(+,-) if \arg{Atom} does not represent a number.
 
     \predicate{name}{2}{?Atomic, ?CodeList}
 \arg{CodeList} is a list of character codes representing the same text
 as \arg{Atomic}. Each of the arguments may be a variable, but not both.
-When \arg{CodeList} describes an integer or floating point number and
+
+\begin{itemize}
+   \item When \arg{CodeList} describes an integer or floating point number and
 \arg{Atomic} is a variable, \arg{Atomic} will be unified with the numeric
 value described by \arg{CodeList} (e.g., \exam{name(N, "300"), 400 is N +
-100} succeeds). If \arg{CodeList} is not a representation of a number,
+100} succeeds).
+   \item If \arg{CodeList} is not a representation of a number,
 \arg{Atomic} will be unified with the atom with the name given by the
-character code list. If \arg{Atomic} is an atom or number, the
+character code list.
+   \item If \arg{Atomic} is an atom or number, the
 unquoted print representation of it as a character code list is
 unified with \arg{CodeList}.
+\end{itemize}
 
 This predicate is part of the Edinburgh tradition. It should be
 considered \jargon{deprecated} although, given its long tradition, it is
 unlikely to be removed from the system. It still has some value for
-converting input to, depending on the syntax, a number or atom. New code
+converting input to a number or an atom (depending on the syntax). New code
 should consider the ISO predicates atom_codes/2, number_codes/2 or the
 SWI-Prolog predicate atom_number/2.
 
@@ -6414,19 +6635,22 @@ X = name42.
 \end{code}
 
     \predicate[commons]{atomic_list_concat}{2}{+List, -Atom}
-\arg{List} is a list of strings, atoms, integers or floating point
-numbers. Succeeds if \arg{Atom} can be unified with the concatenated
-elements of \arg{List}. Equivalent to \term{atomic_list_concat}{List,
-'', Atom}.
+\arg{List} is a list of strings, atoms, integers, floating point numbers
+or non-integer rationals. Succeeds if \arg{Atom} can be unified with the
+concatenated elements of \arg{List}. Equivalent to
+\term{atomic_list_concat}{List, '', Atom}.
 
     \predicate[commons]{atomic_list_concat}{3}{+List, +Separator, -Atom}
 Creates an atom just like atomic_list_concat/2, but inserts \arg{Separator}
-between each pair of inputs.  For example:
+between each pair of inputs. For example:
 \begin{code}
 ?- atomic_list_concat([gnu, gnat], ', ', A).
 
 A = 'gnu, gnat'
 \end{code}
+
+The `atomwards` transformation is usually called a \jargon{string join}
+operation in other programming languages.
 
 The SWI-Prolog version of this predicate can also be used to split atoms
 by instantiating \arg{Separator} and \arg{Atom} as shown below.  We kept
@@ -10525,6 +10749,8 @@ return values are (in the same order as above): \const{equal},
 \const{mismatched_char}, \const{inserted_char}, \const{transposed_char},
 \const{separated} and \const{transposed_word}.
     \predicate{wildcard_match}{2}{+Pattern, +String}
+\nodescription
+    \predicate{wildcard_match}{3}{+Pattern, +String, +Options}
 True if \arg{String} matches the wildcard pattern \arg{Pattern}.
 \arg{Pattern} is very similar to the Unix \const{csh} pattern matcher. The
 patterns are given below:
@@ -10545,6 +10771,13 @@ Example:
 ?- wildcard_match('[a-z]*.{pro,pl}[%~]', 'a_hello.pl%').
 true.
 \end{code}
+
+The wildcard_match/3 version processes the following option:
+
+\begin{description}
+    \termitem{case_sensitive}{+Boolean}
+When \const{false} (default \const{true}), match case insensitively.
+\end{description}
 
     \predicate{sleep}{1}{+Time}
 Suspend execution \arg{Time} seconds. \arg{Time} is either a floating
