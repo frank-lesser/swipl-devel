@@ -3476,14 +3476,14 @@ bad_encoding(const char *msg, atom_t name)
 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-fn_to_atom() translates a 8-bit  filename  into   a  unicode  atom.  The
+file_name_to_atom() translates a 8-bit filename into a unicode atom. The
 encoding is generic `multibyte' on Unix systems   and  fixed to UTF-8 on
 Windows, where the uxnt layer  translates   the  UTF-8  sequences to the
 Windows *W() functions.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-static atom_t
-fn_to_atom(const char *fn)
+atom_t
+file_name_to_atom(const char *fn)
 { PL_chars_t text;
   atom_t a;
 
@@ -3874,7 +3874,7 @@ openStream(term_t file, term_t mode, term_t options)
 		 ATOM_open, ATOM_source_sink, file);
       return NULL;
     }
-    setFileNameStream_unlocked(s, fn_to_atom(path));
+    setFileNameStream_unlocked(s, file_name_to_atom(path));
   } else
   { return NULL;
   }
@@ -5605,7 +5605,7 @@ copy_stream_data(+StreamIn, +StreamOut, [Len])
 static int
 copy_stream_data(term_t in, term_t out, term_t len ARG_LD)
 { IOSTREAM *i, *o;
-  int c;
+  int c, rc;
   int count = 0;
 
   if ( !getInputStream(in, S_DONTCARE, &i) )
@@ -5640,14 +5640,14 @@ copy_stream_data(term_t in, term_t out, term_t len ARG_LD)
 	return FALSE;
       }
       if ( Sputcode(c, o) < 0 )
-      { releaseStream(i);
-	return streamStatus(o);
-      }
+	break;
     }
   }
 
-  releaseStream(o);
-  return streamStatus(i);
+  rc = streamStatus(o);
+  rc = streamStatus(i) && rc;
+
+  return rc;
 }
 
 static

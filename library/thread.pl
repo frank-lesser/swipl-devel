@@ -50,7 +50,7 @@
 :- autoload(library(apply),[maplist/2,maplist/3,maplist/4,maplist/5]).
 :- autoload(library(error),[must_be/2]).
 :- autoload(library(lists),[subtract/3,same_length/2]).
-:- autoload(library(option),[option/3]).
+:- autoload(library(option),[option/2, option/3]).
 :- autoload(library(ordsets), [ord_intersection/3]).
 :- autoload(library(debug), [debug/3, assertion/1]).
 
@@ -71,6 +71,12 @@
 
 :- predicate_options(concurrent/3, 3,
                      [ pass_to(system:thread_create/3, 3)
+                     ]).
+:- predicate_options(concurrent_forall/3, 3,
+                     [ threads(nonneg)
+                     ]).
+:- predicate_options(concurrent_and/3, 3,
+                     [ threads(nonneg)
                      ]).
 :- predicate_options(first_solution/3, 3,
                      [ on_fail(oneof([stop,continue])),
@@ -295,12 +301,12 @@ join_all([Id|T]) :-
 		 *             FORALL		*
 		 *******************************/
 
-%!  concurrent_forall(:Generate, :Test) is semidet.
-%!  concurrent_forall(:Generate, :Test, +Options) is semidet.
+%!  concurrent_forall(:Generate, :Action) is semidet.
+%!  concurrent_forall(:Generate, :Action, +Options) is semidet.
 %
-%   True when Test is true for all   solutions of Generate. This has the
-%   same semantics as forall/2,  but  the   Test  goals  are executed in
-%   multiple threads. Notable a  failing  Test   or  a  Test throwing an
+%   True when Action is true for all solutions of Generate. This has the
+%   same semantics as forall/2, but  the   Action  goals are executed in
+%   multiple threads. Notable a failing Action   or a Action throwing an
 %   exception signals the calling  thread  which   in  turn  aborts  all
 %   workers and fails or re-throws the generated error. Options:
 %
@@ -312,7 +318,7 @@ join_all([Id|T]) :-
 %   to dynamic scheduling of  HTTP  worker   threads.  This  would avoid
 %   creating threads that are never used if Generate is too slow or does
 %   not provide enough answers and  would   further  raise the number of
-%   threads if Test is I/O bound rather than CPU bound.
+%   threads if Action is I/O bound rather than CPU bound.
 
 :- dynamic
     fa_aborted/1.

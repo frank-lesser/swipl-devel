@@ -99,7 +99,7 @@ set(SWIPL_DATA_DIRS
     ${SWIPL_DATA_INDEXED_DIRS}
     library/dialect library/dialect/swi library/dialect/eclipse
     library/dialect/hprolog library/dialect/sicstus library/dialect/iso
-    library/dialect/yap library/dialect/xsb library/theme
+    library/dialect/yap library/dialect/xsb library/theme library/iri_scheme
     demo)
 
 set(SWIPL_DATA_boot init.pl syspred.pl toplevel.pl license.pl bags.pl apply.pl
@@ -135,7 +135,7 @@ set(SWIPL_DATA_library explain.pl sort.pl prolog_config.pl
     solution_sequences.pl iostream.pl dicts.pl yall.pl tabling.pl
     lazy_lists.pl prolog_jiti.pl zip.pl obfuscate.pl wfs.pl
     prolog_wrap.pl prolog_trace.pl prolog_code.pl intercept.pl
-    prolog_deps.pl tables.pl)
+    prolog_deps.pl tables.pl hashtable.pl)
 if(INSTALL_DOCUMENTATION)
   set(SWIPL_DATA_library ${SWIPL_DATA_library} help.pl)
 endif()
@@ -153,6 +153,8 @@ set(SWIPL_DATA_library_lynx format.pl html_style.pl html_text.pl
     pldoc_style.pl)
 
 set(SWIPL_DATA_library_theme auto.pl dark.pl)
+
+set(SWIPL_DATA_library_iri_scheme file.pl)
 
 set(SWIPL_DATA_library_clp bounds.pl clp_events.pl clp_distinct.pl
     clpfd.pl clpb.pl)
@@ -318,6 +320,10 @@ endif()
 add_executable(swipl ${SWIPL_SRC})
 target_link_libraries(swipl ${SWIPL_LIBRARIES} libswipl)
 target_c_stack(swipl 4000000)
+if(MINGW_ROOT)
+  message("Adding -municode")
+  target_link_options(swipl PRIVATE -municode)
+endif()
 
 # build the library
 if(SWIPL_SHARED_LIB)
@@ -469,7 +475,7 @@ add_custom_target(check
     COMMAND ${PROG_SWIPL} -f none --no-packs -q ${CMAKE_CURRENT_SOURCE_DIR}/test.pl)
 
 set(SWIPL_TEST_DIRS unprotected core attvar debug tabling library
-    charset eclipse clp GC save files transaction
+    compile charset eclipse clp GC save files transaction
     xsb/basic_tests xsb/ai_tests xsb/ptq xsb/neg_tests xsb/delay_tests
     xsb/wfs_tests xsb/table_tests xsb/incremental_tests xsb/nonmt_tests
     xsb/sub_tests)

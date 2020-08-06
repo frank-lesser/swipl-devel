@@ -352,7 +352,7 @@ make_library_index2(Dir, Patterns) :-
     plfile_in_dir(Dir, 'INDEX', _Index, AbsIndex),
     ensure_slash(Dir, DirS),
     pattern_files(Patterns, DirS, Files),
-    (   library_index_out_of_date(AbsIndex, Files)
+    (   library_index_out_of_date(Dir, AbsIndex, Files)
     ->  do_make_library_index(AbsIndex, DirS, Files),
         flag('$modified_index', _, true)
     ;   true
@@ -380,12 +380,12 @@ pattern_files([H|T], DirS, Files) :-
     '$append'(Files0, Rest, Files),
     pattern_files(T, DirS, Rest).
 
-library_index_out_of_date(Index, _Files) :-
+library_index_out_of_date(_Dir, Index, _Files) :-
     \+ exists_file(Index),
     !.
-library_index_out_of_date(Index, Files) :-
+library_index_out_of_date(Dir, Index, Files) :-
     time_file(Index, IndexTime),
-    (   time_file('.', DotTime),
+    (   time_file(Dir, DotTime),
         DotTime > IndexTime
     ;   '$member'(File, Files),
         time_file(File, FileTime),
@@ -561,9 +561,15 @@ autoload_in(explicit_or_user, general,  user).
 %!  do_autoload(+File, :PI, +LoadModule) is det.
 %
 %   Load File, importing PI into the qualified  module. File is known to
-%   define LoadModule.
+%   define LoadModule. There are three cases:
 %
-%   @tbd: Why do we need LoadModule?
+%     - The target is the autoload module itself.  Uncommon.
+%     - We already loaded this module. Note that
+%       '$get_predicate_attribute'/3 alone is not enough as it will
+%       consider auto-import from `user`. '$c_current_predicate'/2
+%       verifies the predicate really exists, but doesn't validate
+%       that it is defined.
+%     - We must load the module and import the target predicate.
 
 do_autoload(Library, Module:Name/Arity, LoadModule) :-
     functor(Head, Name, Arity),
@@ -572,7 +578,8 @@ do_autoload(Library, Module:Name/Arity, LoadModule) :-
     '$compilation_mode'(OldComp, database),
     (   Module == LoadModule
     ->  ensure_loaded(Module:Library)
-    ;   (   '$get_predicate_attribute'(LoadModule:Head, defined, 1),
+    ;   (   '$c_current_predicate'(_, LoadModule:Head),
+            '$get_predicate_attribute'(LoadModule:Head, defined, 1),
             \+ '$loading'(Library)
         ->  Module:import(LoadModule:Name/Arity)
         ;   use_module(Module:Library, [Name/Arity])
@@ -831,7 +838,8 @@ register_autoloads([PI|T], Module, File, Context) :-
             fail
         ;   Done = true
         )
-    ;   '$get_predicate_attribute'(Module:Head, imported, From)
+    ;   '$c_current_predicate'(_, Module:Head), % no auto-import
+        '$get_predicate_attribute'(Module:Head, imported, From)
     ->  (   (   '$resolved_source_path'(File, FullFile)
             ->  true
             ;   '$resolve_source_path'(File, FullFile, [])

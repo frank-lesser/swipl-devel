@@ -230,7 +230,7 @@ used to evaluate \jargon{incremental tabling}
 Cohen from CMU}.
 
 Emulating XSB is relatively complicated due to the large distance from
-the Quintus decendant Prolog systems. Notably XSB's name based module
+the Quintus descendant Prolog systems. Notably XSB's name based module
 system is hard to map on SWI-Prolog's predicate based module system. As
 a result, only non-modular projects or projects with basic usage of
 modules are supported. For the development of new projects that require
@@ -257,7 +257,7 @@ on term_expansion/2 of the virtual term \const{begin_of_file}.
     \item The second phase loads the file as normal.
 \end{enumerate}
 
-To load a project in both XSB and SWI-Prolog it is adviced to make sure
+To load a project in both XSB and SWI-Prolog it is advised to make sure
 all source files use the \fileext{P} file name extension.  Next, write a
 SWI-Prolog loader in a \fileext{pl} file that contains e.g.,
 
@@ -298,7 +298,7 @@ This import directive is resolved as follows:
 \begin{itemize}
     \item If the referenced library is found as a local file,
 it is loaded and the requested predicates are imported.
-    \item Otherwise, the referenced libary is searched for in
+    \item Otherwise, the referenced library is searched for in
 the \file{dialect/xsb} directory of the SWI-Prolog library.
 If found, the predicates are imported from this library.
     \item The referenced predicates are searched for in SWI-Prolog

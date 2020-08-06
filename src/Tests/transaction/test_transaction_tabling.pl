@@ -34,12 +34,53 @@
     POSSIBILITY OF SUCH DAMAGE.
 */
 
+:- module(test_transaction_tabling,
+          [ test_transaction_tabling/0
+          ]).
+:- use_module(library(plunit)).
+:- use_module(library(debug)).
 
-#ifndef _PL_TRANSACTION_H
-#define _PL_TRANSACTION_H
+test_transaction_tabling :-
+    run_tests([ tr_incremental_tabling
+              ]).
 
-COMMON(int)	transaction_retract_clause(Clause clause ARG_LD);
-COMMON(int)	transaction_assert_clause(Clause clause, ClauseRef where ARG_LD);
-COMMON(int)	transaction_visible_clause(Clause cl, gen_t gen ARG_LD);
+:- begin_tests(tr_incremental_tabling).
 
-#endif /*_PL_TRANSACTION_H*/
+:- table p/1 as incremental.
+:- dynamic d/1 as incremental.
+
+p(X) :- d(X).
+
+cleanup :-
+    retractall(d(_)),
+    abolish_all_tables.
+
+test(assert, cleanup(cleanup)) :-
+    assertz(d(1)),
+    assertion(setof(X, p(X), [1])),
+    snapshot(add_to_p),
+    assertion(setof(X, p(X), [1])).
+test(tmp_assert, cleanup(cleanup)) :-
+    snapshot(add_to_p2),
+    assertion(\+ p(_)).
+test(retract, cleanup(cleanup)) :-
+    assertz(d(1)),
+    assertz(d(2)),
+    assertion(setof(X, p(X), [1,2])),
+    snapshot(del_from_p),
+    assertion(setof(X, p(X), [1,2])).
+
+add_to_p :-
+    assertz(d(2)),
+    assertion(setof(X, p(X), [1,2])).
+
+add_to_p2 :-
+    assertz(d(1)),
+    assertion(setof(X, p(X), [1])),
+    retractall(d(_)).
+
+del_from_p :-
+    retract(d(2)),
+    assertion(setof(X, p(X), [1])).
+
+:- end_tests(tr_incremental_tabling).

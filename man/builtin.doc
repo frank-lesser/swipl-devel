@@ -3,66 +3,133 @@
 \section{Notation of Predicate Descriptions}	\label{sec:preddesc}
 
 We have tried to keep the predicate descriptions clear and concise.
-First, the predicate name is printed in bold face, followed by the
-arguments in italics.  Arguments are preceded by a mode indicator.
-There is no complete agreement on mode indicators in the Prolog
+First, the predicate name is printed in \textbf{bold face}, followed by
+the arguments in \textit{italics}. Arguments are preceded by a
+\jargon{mode indicator}.
+
+\subsection{The argument mode indicator}        \label{sec:argmode}
+
+\index{argument mode indicator}%
+An \jargon{argument mode indicator} gives information about the intended
+direction in which information carried by a predicate argument is supposed
+to flow. Mode indicators (and types) are not a formal part of the Prolog
+language but help in explaining intended semantics to the programmer.
+There is no complete agreement on argument mode indicators in the Prolog
 community.  We use the following definitions:%
-	\footnote{These definitions are taken from PlDoc.  The current
-		  manual has only one mode declaration per predicate and
-		  therefore predicates with mode (+,-) and (-,+) are
-		  described as (?,?).  The \chr{@}-mode is often replaced
-		  by \chr{+}.}
+\footnote{These definitions are taken from the \jargon{PlDoc} markup
+	  language description. \jargon{PldDoc} markup is used
+	  for source code markup (as well as for the commenting tool).
+	  The current manual has only one
+	  mode declaration per predicate and therefore predicates
+	  with mode (\chr{+},\chr{-}) and (\chr{-},\chr{+}) are
+	  described as (\chr{?},\chr{?}). The \chr{@}-mode is often
+	  replaced by \\chr{+}.}
 
 \begin{center}
 \begin{tabular}{lp{0.7\linewidth}}
 \hline
-++&	Argument must be ground, i.e., the argument may not contain a
-	variable anywhere. \\
-+ &	Argument must be fully instantiated to a term that satisfies the
-	type.  This is not necessarily \jargon{ground}, e.g., the term
-	\exam{[_]} is a \jargon{list}, although its only member is
-	unbound. \\
-- &	Argument is an \emph{output} argument.  Unless specified
-	otherwise, output arguments need not to be unbound. For
-	example, the goal \exam{findall(X, Goal, [T])} is good style and
-	equivalent to \exam{findall(X, Goal, Xs), Xs = [T]}\footnote{The
-	ISO standard dictates that \exam{findall(X, Goal, 1)} raises a
-	\const{type_error} exception, breaking this semantic relation.
-	SWI-Prolog does not follow the standard here.}  Note that the
-	\jargon{determinism} specification, e.g., ``det'' only applies
-	if this argument is unbound. \\
---&	Argument must be unbound.  Typically used by predicates that
-	create `something' and return a handle to the created object,
-	such as open/3 which creates a \jargon{stream}. \\
-? &	Argument must be bound to a \emph{partial term} of the indicated
-	type.  Note that a variable is a partial term for any type.
-	Think of the argument as either \jargon{input} or \jargon{output} or
-	\emph{both} input and output.  For example, in
-	\exam{stream_property(S, reposition(Bool))}, the \const{reposition}
-	part of the term is input and the uninstantiated \arg{Bool} is output. \\
-: &	Argument is a meta-argument.  Implies \chr{+}. See \chapref{modules}
-	for more information on module handling. \\
-@ &	Argument is not further instantiated. Typically used for type tests.\\
+++&	At call time, the argument must be \jargon{ground}, i.e., the
+        argument may not contain any variables that are still unbound. \\
++ &	At call time, the argument must be instantiated to a term satisfying
+        some (informal) type specification. The argument need not necessarily
+	be ground.
+        For example, the term \exam{[_]} is a list, although its only
+	member is the anonymous variable, which is always unbound (and thus
+        nonground). \\
+- &	Argument is an \emph{output} argument. It may or may not be bound at
+        call-time. If the argument is bound at call time, the goal behaves
+	as if the argument were unbound, and then unified with that term after
+	the goal succeeds. This is what is called being \jargon{steadfast}:
+        instantiation of output arguments at call-time does not change the
+        semantics of the predicate, although optimizations may be performed.
+        For example, the goal \exam{findall(X, Goal, [T])} is good style and
+        equivalent to \exam{findall(X, Goal, Xs), Xs = [T]}%
+        \footnote{The ISO standard dictates that \exam{findall(X, Goal, 1)}
+        raise a \const{type_error} exception, breaking steadfastness. SWI-Prolog
+        does not follow the standard here.} %
+	Note that any \jargon{determinism} specification, e.g., \const{det}, only
+	applies	if the argument is unbound. For the case where the argument is
+        bound or involved in constraints, \const{det} effectively becomes
+        \const{semidet}, and \const{multi} effectively becomes
+        \const{nondet}. \\
+--&	At call time, the argument must be unbound. This is typically used by
+        predicates that	create `something' and return a handle to the created
+        object,	such as open/3, which creates a \jargon{stream}. \\
+? &	At call time, the argument must be bound to a \emph{partial term}
+        (a term which may or may not be ground) satisfying some (informal) type
+        specification. Note that an unbound variable \emph{is} a partial
+        term. Think of the argument as either providing input or accepting
+        output or being used for both input and output.
+        For example, in	\exam{stream_property(S, reposition(Bool))}, the
+        \const{reposition} part of the term provides input and the
+        unbound-at-call-time \arg{Bool} variable accepts output. \\
+: &	Argument is a \jargon{meta-argument}, for example a term that can be
+        called as goal. The predicate is thus a \jargon{meta-predicate}. This
+        flag implies \chr{+}. \\
+@ &	Argument will not be further instantiated than it is at call-time.
+        Typically used for type tests. \\
 ! &	Argument contains a mutable structure that may be modified using
 	setarg/3 or nb_setarg/3. \\
 \hline
 \end{tabular}
 \end{center}
 
+See also \secref{metacall} for examples of meta-predicates, and
+\secref{metapred} for mode flags to label meta-predicate arguments in
+module export declarations.
+
+\subsection{Redicate indicators}            \label{sec:predicate_indic}
+
 \index{predicate indicator}%
 Referring to a predicate in running text is done using a
 \jargon{predicate indicator}. The canonical and most generic form of a
-predicate indicator is a term <module>:<name>/<arity>. If the module is
-irrelevant (built-in predicate) or can be inferred from the context it
-is often omitted. Compliant to the ISO standard draft on DCG (see
-\secref{DCG}), SWI-Prolog also allows for [<module>]:<name>//<arity> to
-refer to a grammar rule. For all non-negative arity, <name>//<arity> is
-the same as <name>/<arity>+2, regardless of whether or not the
-referenced predicate is defined or can be used as a grammar rule.
-The //-notation can be used in all places that traditionally allow
-for a predicate indicator, e.g., the module declaration, spy/1,
-and dynamic/1.
+predicate indicator is a term \exam{[<module>:]<name>/<arity>}. The module is
+generally omitted if it is irrelevant (case of a built-in predicate) or if it
+can be inferred from context.
 
+\subsubsection{Non-terminal indicatora}		\label{sec:nonterminal_indic}
+
+\index{non-terminal indicator}%
+Compliant to the ISO standard draft on Definite Clause Grammars (see
+\secref{DCG}), SWI-Prolog also allows for the \jargon{non-terminal
+indicator} to refer to a \jargon{DCG grammar rule}. The non-terminal
+indicator is written as \exam{[<module>]:<name>//<arity>}.
+
+A non-terminal indicator \exam{<name>//<arity>} is understood to be
+equivalent to \exam{<name>/<arity>+2}, regardless of whether or not the
+referenced predicate is defined or can be used as a grammar rule.%
+\footnote{This, however, makes a specific assumption about the
+implementation of DCG rules, namely that DCG rules are preprocessed into
+standard Prolog rules taking two additional arguments, the input list
+and the output list, in accumulator style. This \emph{need} not be true
+in all implementations.}
+The \const{//}-notation can be used in all
+places that traditionally allow for a predicate indicator, e.g., the
+module declaration, spy/1, and dynamic/1.
+
+\subsection{Predicate behaviour and determinism} \label{sec:determinism}
+
+\index{predicate behaviour and determinism}%
+To describe the general behaviour of a predicate, the following vocabulary
+is employed. In source code, structured comments contain the corresponding
+keywords:
+
+\begin{center}
+\begin{tabular}{lp{0.7\linewidth}}
+\hline
+\const{det} &	  A \jargon{deterministic} predicate always succeeds exactly
+                  once and does not leave a choicepoint. \\
+\const{semidet} & A \jargon{semi-deterministic} predicate succeeds at most
+                  once.  If it succeeds it does not leave a choicepoint. \\
+\const{nondet}  & A \jargon{non-deterministic} predicate is the most general
+		  case and no claims are made on the number of solutions (which
+                  may be zero, i.e., the predicate may \jargon{fail}) and whether
+		  or not the predicate leaves an choicepoint on the last
+		  solution. \\
+\const{nondet}  & As \const{nondet}, but succeeds at least once. \\
+\hline
+\end{tabular}
+\end{center}
 
 \section{Character representation}		\label{sec:chars}
 
@@ -1627,7 +1694,7 @@ True if \arg{Term} is bound to a compound term.  See also functor/3
 
     \predicate[ISO]{callable}{1}{@Term}
 True if \arg{Term} is bound to an atom or a compound term. This was
-intended as a type-test for arguments to call/1 and call/2.. Note that
+intended as a type-test for arguments to call/1, call/2 etc. Note that
 callable only tests the \jargon{surface term}. Terms such as (22,true)
 are considered callable, but cause call/1 to raise a type error.
 Module-qualification of meta-argument (see meta_predicate/1) using
@@ -2130,8 +2197,8 @@ once(Goal) :-
 \end{code}
 
 once/1 can in many cases be replaced with \predref{->}{2}. The only
-difference is how the cut behaves (see !/0). The following two clauses
-below are identical. Be careful about the interaction with
+difference is how the cut behaves (see \predref{!}{0}). The following
+two clauses below are identical. Be careful about the interaction with
 \predref{;}{2}. The \pllib{apply_macros} library defines an inline
 expansion of once/1, mapping it to \verb$(Goal->true;fail)$. Using the
 full if-then-else constructs prevents its semantics from being changed
@@ -2556,7 +2623,7 @@ relevant \jargon{error context} information.
 It may be a compound term of arity 1,2 or 3 - or simply an atom if
 there is no relevant error context information.
 
-\item [\arg{Context}] gives additional context information beyond
+\item [\arg{Context}] additional context information beyond
 the one in \arg{Formal}. If may be unset, i.e. a fresh variable, or
 set to something that hopefully will help the programmer in debugging.
 The structure of \arg{Context} is left unspecified by the ISO
@@ -2564,8 +2631,9 @@ Standard, so SWI-Prolog creates it own convention (see below).
 \end{itemlist}
 
 Thus, constructing an error term and throwing it might take
-this form (although you would not use the explicit naming given here
-for illustration purposes, but write the term to throw directly):
+this form (although you would not use the illustrative explicit
+naming given here; instead composing the exception term directly in
+a one-liner):
 
 \begin{code}
 Exception = error(Formal, Context),
@@ -2576,6 +2644,28 @@ Culprit   = ... some value ...,
 throw(Exception)
 \end{code}
 
+Note that the ISO standard formal term expresses \emph{what should be
+the case} or \emph{what is the expected correct state}, and not
+\emph{what is the problem}.  For example:
+
+\begin{itemlist}
+    \item If a variable is found to be uninstantiated but should be instantiated,
+the error term is \const{instantiation_error}: The problem is not that there is an
+unwanted instantiation, but that the correct state is the one with an
+instantiated variable.
+
+    \item In case a variable is found to be instantiated but should be uninstantiated
+(because it will be used for output), the error term is
+\term{uninstantiation_error}{Culprit}: The problem is not that there is
+lack of instantiation, but that the correct state is the one which
+\arg{Culprit} (or one of its subterms) is more uninstantiated than
+is the case.
+
+    \item If you try to disassemble an empty list with compound_name_arguments/3,
+the error term is \term{type_error}{compound,[]}. The problem is not
+that \const{[]} is (erroneously) a compound term, but that a compound
+term is expected and \const{[]} does not belong to that class.
+\end{itemlist}
 
 \subsubsection{Throwing exceptions from applications and libraries}
 \label{sec:throwsfromuserpreds}
@@ -2588,7 +2678,7 @@ Notably, exceptions of the shape \term{error}{Formal,Context} are
 recognised by the development tools and therefore expressing unexpected
 situations using these exceptions improves the debugging experience.
 
-In SWI-Prolog, the second argument of the exception term, i.e. the
+In SWI-Prolog, the second argument of the exception term, i.e., the
 \arg{Context} argument, is generally of the form
 \term{context}{Location, Message}, where:
 
@@ -2623,7 +2713,7 @@ from \pllib{error}. Termwise, these predicates look exactly like the
 \end{itemlist}
 
 
-\subsection{Printing messages}			\label{sec:printmsg}
+\section{Printing messages}			\label{sec:printmsg}
 
 The predicate print_message/2 is used to print a message term in a
 human-readable format. The other predicates from this section allow the user
@@ -2699,7 +2789,7 @@ The predicate print_message/2 first translates the \arg{Term} into a
 list of `message lines' (see print_message_lines/3 for details). Next,
 it calls the hook message_hook/3 to allow the user to intercept the
 message. If message_hook/3 fails it prints the message unless \arg{Kind}
-is silent.
+is \const{silent}.
 
 The print_message/2 predicate and its rules are in the file
 \file{<plhome>/boot/messages.pl}, which may be inspected for more
@@ -2833,7 +2923,7 @@ using the hook prolog:message//1.  If not defined, it is simply printed.
 \end{description}
 
 
-\subsubsection{Printing from libraries}		\label{sec:libprintmsg}
+\subsection{Printing from libraries}		\label{sec:libprintmsg}
 
 Libraries should \emph{not} use format/3 or other output predicates
 directly. Libraries that print informational output directly to the
@@ -3375,11 +3465,13 @@ retract/1 during its life time. See \secref{update}. In a multi-threaded
 context this assumption still holds for individual predicates:
 concurrent modifications to a dynamic predicate are invisible.
 
-\jargon{Transactions} allow running a goal in \jargon{isolation}.
-Database changes from other threads are invisible while changes inside
-the transaction are invisible to other threads and become
-\jargon{atomically} visible to other threads if the transaction is
-\jargon{committed}. Transactions have several benefits
+\jargon{Transactions} allow running a goal in \jargon{isolation}. The
+goals running inside the transaction `see' the database as it was when
+the transaction was started together with database changes done by the
+transaction goal. Other threads see no changes until the transaction is
+\jargon{committed}. The commit, also if it involved multiple clauses
+spread over multiple predicates, becomes \jargon{atomically} visible to
+other threads. Transactions have several benefits
 \cite{DBLP:journals/corr/abs-1301-7669}
 
 \begin{itemize}
@@ -3390,19 +3482,32 @@ the transaction are invisible to other threads and become
     in an inconsistent state.
 
     \item Other threads do not see the intermediate inconsistent
-    states when performing a database update as above.  Notably,
-    this avoids the need for locking for a database update that
-    updates a clause by retracting it and asserting a new one.
-    For example, when using the code below to update
-    \nopredref{temperature}{1}, consumers of this fact do not
-    need synchronization because \nopredref{temperature}{1}
-    is always present and always has exactly one clause.
+    states when a database update that consists of multiple assert
+    and/or retract is performed in a transaction. This notably avoids
+    the need to use locks (see with_mutex/2) in threads that read the
+    data. A reading thread may still need to use snapshot/1 if a goal
+    depends on multiple calls to dynamic predicates.  Unlike locks,
+    transaction and snapshot based synchronization allows both readers
+    and writers to make progress
+    simultaneously.\footnote{\jargon{Read-write} locks also provide
+    readers and writers to make progress simultaneously, but readers
+    see all intermediate states rather than a consistent state.}
+
+    Transactions on their own \textbf{do not guarantee consistency}.
+    For example, when running the code below to update the temperature
+    concurrently from multiple threads it is possible for the global
+    state to have multiple \nopredref{temperature}{1} clauses.
 
 \begin{code}
 update_temperature(Temp) :-
     transaction(( retractall(temperature(_)),
 		  asserta(temperature(Temp)))).
 \end{code}
+
+    Global \jargon{consistency} can be achieved by wrapping the above
+    transaction using with_mutex/2 or by using transaction/3 with a
+    \jargon{constraint} that demands a single clause for
+    \nopredref{temperature}{1}
 
     \item Transactions allow for ``what if'' reasoning over the
     dynamic database.  This is particularly useful when combined
@@ -3420,7 +3525,7 @@ files provide clauses for dynamic predicates.
 \begin{description}
     \predicate{transaction}{1}{:Goal}
 Run \arg{Goal} as once/1 in a transaction. This implies that access to
-dynamic predicates sees the dynamic predicates at the moment the
+dynamic predicates `sees' the dynamic predicates at the moment the
 transaction is started, together with the modifications issued by
 \arg{Goal}. Thus, \arg{Goal} does not see changes to dynamic predicates
 from other threads and other threads do not see modifications by
@@ -3436,15 +3541,75 @@ exception is raised.
 
 Transactions may be nested. The above mentioned limitation for the
 number of database changes applies to the combined number in nested
-transactions. A discarded nested transaction or snapshot resets the
-database counter for the outer transaction.
+transactions.
+
+If \arg{Goal} succeeds, the transaction is \emph{committed}. This
+implies that (1) any clause that is asserted in the transaction and not
+retracted in the same transaction is made \emph{globally visible} and
+(2) and clause the existed before the transaction and is retracted in
+the transaction becomes \emph{globally invisible}. Multiple transactions
+may retract the same clause and be committed, i.e., committing a retract
+that was already performed is a no-op.  All modifications become
+\jargon{atomically} visible to other threads.  The transaction/3
+variation allows for verifying \jargon{constraints} just before the
+commit takes place.
+
+\paragraph{Clause ordering} Inside a transaction clauses can be added
+using asserta/1 and assertz/1. If only a single transaction is active at
+any point in time transactions preserve the usual ordering of clauses.
+However, if multiple transactions manipulate the same predicate(s)
+concurrently (typically using transaction/3), the final order of the
+clauses is the order in which the transactions asserted the clauses and
+\textbf{not} the order in which the transactions are committed.
+
+    \predicate{transaction}{3}{:Goal, :Constraint, +Mutex}
+Similar to transaction/1, but allows verifying \arg{Constraint} during
+the commit phase.  This predicate follows the steps below.  Any failure
+or exception during this process discards the transaction and releases
+\arg{Mutex} when applicable. \arg{Constraint} may modify the database.
+Such modifications follow the semantics that apply for \arg{Goal}.
+
+\begin{itemize}
+    \item Call \term{once}{Goal}
+    \item Lock \arg{Mutex}
+    \item Change the visibility to the \emph{current} global state
+          combined with the changes made by \arg{Goal}
+    \item Call \term{once}{Constraint}
+    \item Commit the changes
+    \item Unlock \arg{Mutex}.
+\end{itemize}
+
+This predicate is intended to execute multiple transactions with a time
+consuming \arg{Goal} in part concurrently. For example, it can be used
+for a \jargon{Compare And Swap} (CAS) like design. We illustrate this
+using a simple counter in the code below. Note that the transaction
+fails if some other thread concurrently updated the counter. This is why
+we need the repeat/0 and a final \predref{!}{0}. The CAS-style update
+is in general useful if \arg{Goal} is expensive and conflicts are rare.
+
+\begin{code}
+:- dynamic counter/1.
+
+increment_counter(Delta) :-
+    repeat,
+      transaction(( counter(Value),
+		    Value2 is Value+Delta,
+		  ),
+		  ( retract(counter(Value)),
+		    asserta(counter(Value2))
+		  ),
+		  counter_lock),
+    !.
+\end{code}
 
     \predicate{snapshot}{1}{:Goal}
 Similar to transaction/1, but \emph{always} discards the local
 modifications. In other words, snapshot/1 allows a thread to examine a
 frozen state of the dynamic predicates and/or make isolated
 modifications without affecting other threads and without making
-permanent changes to the database.
+permanent changes to the database.  Where transactions allow the global
+state to be updated atomically from one consistent state to the next, a
+snapshot allows reasoning about a consistent state.
 
     \predicate[nondet]{current_transaction}{1}{-Goal}
 True when called inside a transaction running \arg{Goal}. This predicate
@@ -3453,18 +3618,26 @@ generates candidates from the current (nested) transaction outward.
 as matching transaction/1 or snapshot/1 and a qualified callable term
 otherwise.  Note that this only enumerates transactions in the current
 thread.
-\end{description}
 
-\paragraph{Issues} The current implementation does \textbf{not} guard
-against multiple transactions performing conflicting database updates.
-For example, running the above \nopredref{update_temperature}{1}
-concurrently may result in a situation where we have multiple clauses
-for \nopredref{temperature}{1}. If two transactions run this at the same
-time, both will remove the existing clause and both will add a new
-clause. Currently the only way to gurantee consistency is by wrapping
-transactions that may perform conflicting updates using with_mutex/2.
-Future versions may provide database \jargon{constraints} to prevent a
-transaction from creating an inconsistent state.
+    \predicate{transaction_updates}{1}{-Updates}
+Unify \arg{Updates} with a list of database updates that would be
+effectuated if the transaction is going to be committed at this stage.
+\arg{Updates} is a list of terms defined below. The elements are sorted
+on the change generation, i.e., the order in which the operations were
+performed.
+
+    \begin{description}
+	\termitem{asserta}{+ClauseRef}
+	\nodescription
+	\termitem{assertz}{+ClauseRef}
+	The given clause will be asserted at the start or end.  Note
+	that due to competing transactions the clause may no longer
+	be the first/last clause of the predicate.
+	\termitem{erase}{+ClauseRef}
+	The given clause will be removed.  This may be due to erase/1,
+	retract/1 or retractall/1.
+    \end{description}
+\end{description}
 
 \paragraph{Status} SWI-Prolog transaction management is highly
 experimental. Interaction with other parts of the system such as the
@@ -3472,8 +3645,12 @@ library \pllib{persistency}, incremental tabling
 (\secref{tabling-incremental}), etc.\ still have to be settled. Future
 versions may also support non-determinism through transactions and
 snapshots.  This is merely a first step to explore isolated changes to
-the dynamic predicate database.
+the dynamic predicate database.  If you use these facilities
 
+\begin{itemize}
+    \item Be aware that the API and exact semantics may still change.
+    \item Discuss successes and problems at our \href{https://swi-prolog.discourse.group/}{Discourse forum}.
+\end{itemize}
 
 \subsection{The recorded database}
 \label{sec:recdb}
@@ -4207,14 +4384,14 @@ Do not show ports of this predicate in the debugger.
 
     \termitem{number_of_clauses}{ClauseCount}
 Unify \arg{ClauseCount} to the number of clauses associated with the
-predicate.  Fails for foreign predicates.
+predicate.  Fails for foreign predicates.  This property respects the
+\jargon{logical update view} and counts visible clauses at the moment
+the predicate was started.
 
     \termitem{number_of_rules}{RuleCount}
-Unify \arg{RuleCount} to the number of clauses associated with the
-predicate. A \jargon{rule} is defined as a clauses that has a body that
-is not just \const{true} (i.e., a \jargon{fact}). Fails for foreign
-predicates. This property is used to avoid analysing predicates with
-only facts in \pllib{prolog_codewalk}.
+Similar to \termitem{number_of_clauses}{ClauseCount}, but only counts
+\jargon{rules}. A \jargon{rule} is defined as a clauses that has a body
+that is not just \const{true} (i.e., a \jargon{fact}).
 
     \termitem{last_modified_generation}{Generation}
 Database generation at which the predicate was modified for the last
@@ -5807,7 +5984,7 @@ current output.
 
     \predicate[semidet]{write_length}{3}{+Term, -Length, +Options}
 True when \arg{Length} is the number of characters emitted for
-\arg{write_term}{Term, Options}.  In addition to valid options for
+\term{write_term}{Term, Options}.  In addition to valid options for
 write_term/2, it processes the option:
 
     \begin{description}
@@ -6185,19 +6362,11 @@ unified with \arg{Term}.  Raises \errorterm{instantiation_error}{} if \arg{Term}
 is unbound and \arg{Name}/\arg{Arity} is insufficiently instantiated.
 
 SWI-Prolog also supports terms with arity 0, as in \exam{a()} (see
-\secref{extensions}. Such terms must be processed using
+\secref{extensions}). Such terms must be processed using
 compound_name_arity/3. The predicate functor/3 and \predref{=..}{2}
 raise a \const{domain_error} when faced with these terms. Without this
-precaution, the inconsistency demonstrated below could happen
-silently.\footnote{Raising a domain error was suggested by Jeff
-Schultz.}
-
-\begin{code}
-?- functor(a(), N, A).
-N = a, A = 0.
-?- functor(T, a, 0).
-T = a.
-\end{code}
+precaution a \jargon{round trip} of a term with arity 0 over functor/3
+would create an atom.
 
     \predicate[ISO]{arg}{3}{?Arg, +Term, ?Value}
 \arg{Term} should be instantiated to a term, \arg{Arg} to an integer
@@ -6229,7 +6398,7 @@ Term = baz(foo(1))
 \end{code}
 
 SWI-Prolog also supports terms with arity 0, as in \exam{a()} (see
-\secref{extensions}. Such terms must be processed using
+\secref{extensions}). Such terms must be processed using
 compound_name_arguments/3. This predicate raises a domain error as shown
 below. See also functor/3.
 
@@ -8293,10 +8462,12 @@ the same as sort/2.  See also keysort/2.
     \predicate[ISO]{findall}{3}{+Template, :Goal, -Bag}
 Create a list of the instantiations \arg{Template} gets successively on
 backtracking over \arg{Goal} and unify the result with \arg{Bag}.
-Succeeds with an empty list if \arg{Goal} has no solutions. findall/3 is
-equivalent to bagof/3 with all free variables bound with the existential
-operator (\op{^}), except that bagof/3 fails when \arg{Goal} has no
-solutions.
+Succeeds with an empty list if \arg{Goal} has no solutions.\\
+
+findall/3 is equivalent to bagof/3 with all \jargon{free} variables
+appearing in \arg{Goal} scoped to the \arg{Goal} with an existential
+(caret) operator (\op{^}), except that bagof/3 fails when \arg{Goal}
+has no solutions.
 
     \predicate{findall}{4}{+Template, :Goal, -Bag, +Tail}
 As findall/3, but returns the result as the difference list

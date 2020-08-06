@@ -1009,8 +1009,9 @@ the alignment of pointers.
 
 typedef uint64_t gen_t;
 
-#define GEN_INFINITE (~(gen_t)0)
-#define GEN_NEW_DIRTY (gen_t)0
+#define GEN_INVALID   ((gen_t)0)
+#define GEN_INFINITE  (~(gen_t)0)
+#define GEN_NEW_DIRTY ((gen_t)0)
 #define GEN_TRANSACTION_BASE 0x8000000000000000
 #define GEN_TRANSACTION_SIZE 0x0000000100000000
 #define GEN_MAX (GEN_TRANSACTION_BASE-1)
@@ -1035,15 +1036,6 @@ typedef uint64_t lgen_t;
 #define setGenerationFrameVal(f, gen) \
 	do { (f)->generation = (gen); } while(0)
 #endif
-#if defined(HAVE_GCC_ATOMIC_8) || SIZEOF_VOIDP == 8
-typedef uint64_t ggen_t;
-#else
-#define ATOMIC_GENERATION_HACK 1
-typedef struct ggen_t
-{ uint32_t	gen_l;
-  uint32_t	gen_u;
-} ggen_t;
-#endif /*HAVE_GCC_ATOMIC_8 || SIZEOF_VOIDP == 8*/
 
 #define setGenerationFrame(fr) setGenerationFrame__LD((fr) PASS_LD)
 
@@ -1241,8 +1233,6 @@ typedef struct functor_table
 
 #define visibleClause(cl, gen) visibleClause__LD(cl, gen PASS_LD)
 #define visibleClauseCNT(cl, gen) visibleClauseCNT__LD(cl, gen PASS_LD)
-
-#define GEN_INVALID 0
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Struct clause must be a  multiple   of  sizeof(word)  for compilation on

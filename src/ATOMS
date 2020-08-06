@@ -338,6 +338,7 @@ A free_of_attvar	"free_of_attvar"
 A freeze		"freeze"
 A fresh			"fresh"
 A from_state		"from_state"
+A rollback		"rollback"
 A roundtoward		"roundtoward"
 A full			"full"
 A fullstop		"fullstop"
@@ -934,6 +935,7 @@ F asin			1
 F asinh			1
 F assert		1
 F asserta		1
+F assertz		1
 F atan			1
 F atan			2
 F atanh			1
@@ -1152,6 +1154,7 @@ F representation_errors 1
 F reset			3
 F resource_error	1
 F retry			1
+F rollback		1
 F round			1
 F roundtoward		2
 F rshift		2

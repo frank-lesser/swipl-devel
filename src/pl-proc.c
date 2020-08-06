@@ -1255,6 +1255,9 @@ assertDefinition(Definition def, Clause clause, ClauseRef where ARG_LD)
     return NULL;
   }
 
+  clause->generation.created = max_generation(def PASS_LD);
+  clause->generation.erased  = 1;
+
   LOCKDEF(def);
   acquire_def(def);
   if ( !def->impl.clauses.last_clause )
@@ -1285,8 +1288,6 @@ assertDefinition(Definition def, Clause clause, ClauseRef where ARG_LD)
     def->impl.clauses.number_of_rules++;
   if ( true(def, P_DIRTYREG) )
     ATOMIC_INC(&GD->clauses.dirty);
-  clause->generation.created = next_generation(def PASS_LD);
-  clause->generation.erased  = max_generation(PASS_LD1);
 
   if ( false(def, P_DYNAMIC|P_LOCKED_SUPERVISOR) ) /* see (*) above */
     freeCodesDefinition(def, TRUE);
@@ -1296,24 +1297,35 @@ assertDefinition(Definition def, Clause clause, ClauseRef where ARG_LD)
   DEBUG(CHK_SECURE, checkDefinition(def));
   UNLOCKDEF(def);
 
-  if ( clause->generation.created == 0 )
-  { PL_representation_error("transaction_generations");
-  error:
-    retractClauseDefinition(def, clause, FALSE);
-    return NULL;
+  if ( unlikely(!!LD->transaction.generation) && def && true(def, P_DYNAMIC) )
+  { if ( LD->transaction.generation < LD->transaction.gen_max )
+    { clause->generation.created = ++LD->transaction.generation;
+      clause->generation.erased  = max_generation(def PASS_LD);
+    } else
+    { PL_representation_error("transaction_generations");
+      goto error;
+    }
+  } else
+  { PL_LOCK(L_GENERATION);
+    clause->generation.created = ++GD->_generation;
+    clause->generation.erased  = max_generation(def PASS_LD);
+    PL_UNLOCK(L_GENERATION);
   }
 
   if ( ( def->events &&
 	 !predicate_update_event(def,
 				 where == CL_START ? ATOM_asserta : ATOM_assertz,
-				 clause PASS_LD) ) )
-    goto error;
+				 clause, 0 PASS_LD) ) )
+  { error:
+    retractClauseDefinition(def, clause, FALSE);
+    return NULL;
+  }
 
   setLastModifiedPredicate(def, clause->generation.created, TWF_ASSERT);
 
   if ( LD->transaction.generation &&
        clause->generation.created >= LD->transaction.gen_base )
-    transaction_assert_clause(clause PASS_LD);
+    transaction_assert_clause(clause, where PASS_LD);
 
   return cref;
 }
@@ -1457,9 +1469,24 @@ retract_clause(Clause clause, gen_t generation ARG_LD)
 { Definition def = clause->predicate;
   size_t size = sizeofClause(clause->code_size) + SIZEOF_CREF_CLAUSE;
 
-  if ( !generation )
-  { if ( !(generation = next_generation(def PASS_LD)) )
-      return PL_representation_error("transaction_generations");
+  if ( generation )
+  { if ( clause->generation.erased > generation )
+      clause->generation.erased = generation;
+  } else if ( unlikely(!!LD->transaction.generation) &&
+	      def && true(def, P_DYNAMIC) )
+  { if ( LD->transaction.generation < LD->transaction.gen_max )
+    { if ( LD->transaction.generation < LD->transaction.gen_max )
+      { if ( clause->generation.erased >= LD->transaction.generation )
+	  clause->generation.erased = ++LD->transaction.generation;
+      }
+    } else
+    { return PL_representation_error("transaction_generations");
+    }
+  } else
+  { PL_LOCK(L_GENERATION);
+    if ( clause->generation.erased >= GD->_generation )
+      clause->generation.erased = ++GD->_generation;
+    PL_UNLOCK(L_GENERATION);
   }
 
   LOCKDEF(def);
@@ -1475,7 +1502,6 @@ retract_clause(Clause clause, gen_t generation ARG_LD)
   def->impl.clauses.erased_clauses++;
   if ( false(clause, UNIT_CLAUSE) )
     def->impl.clauses.number_of_rules--;
-  clause->generation.erased = generation;
   DEBUG(CHK_SECURE, checkDefinition(def));
   UNLOCKDEF(def);
 
@@ -1502,7 +1528,7 @@ retractClauseDefinition(Definition def, Clause clause, int notify)
 { GET_LD
 
   if ( def->events && notify &&
-       !predicate_update_event(def, ATOM_retract, clause PASS_LD) )
+       !predicate_update_event(def, ATOM_retract, clause, 0 PASS_LD) )
     return FALSE;
 
   if ( LD->transaction.generation )
@@ -2652,8 +2678,12 @@ autoImport(functor_t f, Module m)
   Definition def, odef;
   ListCell c;
 					/* Defined: no problem */
-  if ( (proc = isCurrentProcedure(f, m)) && isDefinedProcedure(proc) )
-    return proc->definition;
+  if ( (proc = isCurrentProcedure(f, m)) )
+  { if ( isDefinedProcedure(proc) )
+      return proc->definition;
+    if ( true(proc->definition, P_AUTOLOAD) )
+      return NULL;
+  }
 
   for(c=m->supers; c; c=c->next)
   { Module s = c->value;
@@ -2944,8 +2974,9 @@ PRED_IMPL("retract", 1, retract,
       setGenerationFrameVal(environment_frame, dref->generation);
       cref = firstClause(argv, environment_frame, def, &ctxbuf.chp PASS_LD);
       DEBUG(MSG_CGC_RETRACT,
-	    Sdprintf("Started retract from %s at gen = %lld\n",
-		     predicateName(def), generationFrame(environment_frame)));
+	    Sdprintf("Started retract from %s at gen = %s\n",
+		     predicateName(def),
+		     generationName(generationFrame(environment_frame))));
       if ( !cref )
       { popPredicateAccess(def);
 	leaveDefinition(def);
@@ -3267,29 +3298,34 @@ attribute_mask(atom_t key)
 
 
 static size_t
-num_visible_clauses(Definition def, atom_t key)
-{ GET_LD
+num_visible_clauses(Definition def, atom_t key, gen_t gen ARG_LD)
+{ size_t count;
 
-  if ( LD->gen_reload != GEN_INVALID )
+  if ( key == ATOM_number_of_clauses )
+    count = def->impl.clauses.number_of_clauses;
+  else
+    count = def->impl.clauses.number_of_rules;
+
+  if ( count > 0 &&
+       (LD->gen_reload != GEN_INVALID || true(def, P_DYNAMIC)) )
   { ClauseRef c;
-    size_t num_clauses = 0;
 
+    if ( !gen )
+      gen = current_generation(def PASS_LD);
+
+    count = 0;
     acquire_def(def);
     for(c = def->impl.clauses.first_clause; c; c = c->next)
     { Clause cl = c->value.clause;
       if ( key == ATOM_number_of_rules && true(cl, UNIT_CLAUSE) )
         continue;
-      if ( visibleClause(cl, generationFrame(environment_frame)) )
-        num_clauses++;
+      if ( visibleClause(cl, gen) )
+        count++;
     }
     release_def(def);
-    return num_clauses;
   }
 
-  if ( key == ATOM_number_of_clauses )
-    return def->impl.clauses.number_of_clauses;
-  else
-    return def->impl.clauses.number_of_rules;
+  return count;
 }
 
 
@@ -3397,7 +3433,7 @@ PRED_IMPL("$get_predicate_attribute", 3, get_predicate_attribute,
       fail;
 
     def = getProcDefinition(proc);
-    num_clauses = num_visible_clauses(def, key);
+    num_clauses = num_visible_clauses(def, key, 0 PASS_LD);
     if ( num_clauses == 0 && false(def, P_DYNAMIC) )
       fail;
     return PL_unify_int64(value, num_clauses);
@@ -3413,7 +3449,7 @@ PRED_IMPL("$get_predicate_attribute", 3, get_predicate_attribute,
     def = getProcDefinition(proc);
     if ( def->impl.clauses.number_of_clauses == 0 && false(def, P_DYNAMIC) )
       fail;
-    return PL_unify_integer(value, num_visible_clauses(def, key));
+    return PL_unify_integer(value, num_visible_clauses(def, key, 0 PASS_LD));
   } else if ( key == ATOM_size )
   { def = getProcDefinition(proc);
     return PL_unify_integer(value, sizeof_predicate(def));
